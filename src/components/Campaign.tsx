@@ -1,0 +1,327 @@
+/** Party roster, session notes, the log, and settings. */
+
+import { useState } from 'react'
+import { useStore } from '../store/useStore'
+import { clearCache, cacheStats } from '../lib/open5e'
+import { Icons, Panel, Empty, Field, Modal } from './ui'
+
+/* ------------------------------------------------------------------ party */
+
+function Party() {
+  const { party, addPartyMember, updatePartyMember, removePartyMember } = useStore()
+  const [openId, setOpenId] = useState<string | null>(null)
+
+  const highest = party.length ? Math.max(...party.map((p) => p.passivePerception)) : 0
+
+  return (
+    <section className="space-y-2">
+      <header className="flex items-center justify-between">
+        <div>
+          <h3 className="panel-title font-semibold text-[0.9rem]">Grup</h3>
+          {party.length > 0 && (
+            <p className="text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+              En yüksek passive Perception: <strong style={{ color: 'var(--accent)' }}>{highest}</strong>
+            </p>
+          )}
+        </div>
+        <button className="btn btn-xs" onClick={addPartyMember}>
+          <Icons.plus className="w-3 h-3" /> Karakter
+        </button>
+      </header>
+
+      {party.length === 0 ? (
+        <Empty icon={<Icons.users className="w-7 h-7" />} title="Grup boş" hint="Karakterleri bir kez gir; savaşa tek tuşla eklenirler." />
+      ) : (
+        <div className="space-y-1">
+          {party.map((p) => (
+            <div key={p.id} className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-deep)' }}>
+              <button
+                className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                onClick={() => setOpenId(openId === p.id ? null : p.id)}
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="font-medium text-[0.85rem] truncate block">{p.name}</span>
+                  <span className="text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+                    {[p.cls, p.level && `Sv. ${p.level}`, p.player && `(${p.player})`].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 text-[0.72rem]" style={{ color: 'var(--ink-mute)' }}>
+                  <span title="AC">
+                    <Icons.shield className="w-3 h-3 inline" /> {p.ac}
+                  </span>
+                  <span title="Max HP">
+                    <Icons.heart className="w-3 h-3 inline" /> {p.maxHp}
+                  </span>
+                  <span title="Passive Perception" className="chip chip-azure">
+                    PP {p.passivePerception}
+                  </span>
+                </div>
+              </button>
+
+              {openId === p.id && (
+                <div className="px-3 pb-3 pt-1 grid grid-cols-2 sm:grid-cols-3 gap-2 animate-fade" style={{ borderTop: '1px solid var(--line-soft)' }}>
+                  <Field label="İsim">
+                    <input className="field field-sm" value={p.name} onChange={(e) => updatePartyMember(p.id, { name: e.target.value })} />
+                  </Field>
+                  <Field label="Oyuncu">
+                    <input className="field field-sm" value={p.player} onChange={(e) => updatePartyMember(p.id, { player: e.target.value })} />
+                  </Field>
+                  <Field label="Sınıf">
+                    <input className="field field-sm" value={p.cls} onChange={(e) => updatePartyMember(p.id, { cls: e.target.value })} />
+                  </Field>
+                  <Field label="Seviye">
+                    <input className="field field-sm text-center" type="number" min={1} max={20} value={p.level} onChange={(e) => updatePartyMember(p.id, { level: +e.target.value || 1 })} />
+                  </Field>
+                  <Field label="AC">
+                    <input className="field field-sm text-center" type="number" value={p.ac} onChange={(e) => updatePartyMember(p.id, { ac: +e.target.value || 0 })} />
+                  </Field>
+                  <Field label="Max HP">
+                    <input className="field field-sm text-center" type="number" value={p.maxHp} onChange={(e) => updatePartyMember(p.id, { maxHp: +e.target.value || 0 })} />
+                  </Field>
+                  <Field label="Pass. Perception">
+                    <input className="field field-sm text-center" type="number" value={p.passivePerception} onChange={(e) => updatePartyMember(p.id, { passivePerception: +e.target.value || 0 })} />
+                  </Field>
+                  <Field label="Pass. Investigation">
+                    <input className="field field-sm text-center" type="number" value={p.passiveInvestigation} onChange={(e) => updatePartyMember(p.id, { passiveInvestigation: +e.target.value || 0 })} />
+                  </Field>
+                  <Field label="Pass. Insight">
+                    <input className="field field-sm text-center" type="number" value={p.passiveInsight} onChange={(e) => updatePartyMember(p.id, { passiveInsight: +e.target.value || 0 })} />
+                  </Field>
+                  <div className="col-span-2 sm:col-span-3">
+                    <Field label="Not">
+                      <input className="field field-sm" placeholder="Bağ, kusur, sır…" value={p.notes} onChange={(e) => updatePartyMember(p.id, { notes: e.target.value })} />
+                    </Field>
+                  </div>
+                  <button className="btn btn-xs col-span-2 sm:col-span-3" style={{ color: 'var(--rose)' }} onClick={() => removePartyMember(p.id)}>
+                    <Icons.trash className="w-3 h-3" /> Sil
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ notes */
+
+function Notes() {
+  const notes = useStore((s) => s.notes)
+  const setNotes = useStore((s) => s.setNotes)
+
+  return (
+    <section className="space-y-2">
+      <h3 className="panel-title font-semibold text-[0.9rem]">Seans Notları</h3>
+      <textarea
+        className="field resize-y leading-relaxed"
+        rows={10}
+        placeholder="Otomatik kaydedilir. Kim ne dedi, hangi kapıyı açmadılar, sonraki sefere ne olacak…"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+      />
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ log */
+
+const LOG_CHIP: Record<string, string> = {
+  roll: 'chip-accent',
+  combat: 'chip-rose',
+  oracle: 'chip-violet',
+  note: 'chip-sage',
+}
+
+function Log() {
+  const log = useStore((s) => s.log)
+  const clearLog = useStore((s) => s.clearLog)
+
+  return (
+    <section className="space-y-2">
+      <header className="flex items-center justify-between">
+        <h3 className="panel-title font-semibold text-[0.9rem]">Günlük</h3>
+        {log.length > 0 && (
+          <button className="btn btn-ghost btn-xs" onClick={clearLog}>
+            Temizle
+          </button>
+        )}
+      </header>
+      {log.length === 0 ? (
+        <p className="text-[0.75rem] py-4 text-center" style={{ color: 'var(--ink-mute)' }}>
+          Zarlar, savaş olayları ve kaydettiğin kâhin sonuçları burada birikir.
+        </p>
+      ) : (
+        <div className="space-y-1 max-h-80 overflow-auto">
+          {log.map((e) => (
+            <div key={e.id} className="px-2.5 py-1.5 rounded-xl text-[0.75rem]" style={{ background: 'var(--bg-deep)' }}>
+              <div className="flex items-baseline gap-2">
+                <span className={`chip ${LOG_CHIP[e.kind] ?? 'chip-mute'}`}>{e.kind}</span>
+                <span className="flex-1 min-w-0">{e.text}</span>
+                <span className="shrink-0 text-[0.65rem]" style={{ color: 'var(--ink-mute)' }}>
+                  {new Date(e.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+              {e.detail && (
+                <p className="mt-0.5 whitespace-pre-wrap text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+                  {e.detail}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ settings */
+
+function SettingsBlock() {
+  const settings = useStore((s) => s.settings)
+  const setSettings = useStore((s) => s.setSettings)
+  const [showKey, setShowKey] = useState(false)
+  const [stats, setStats] = useState(() => cacheStats())
+
+  return (
+    <section className="space-y-2.5">
+      <h3 className="panel-title font-semibold text-[0.9rem]">Ayarlar</h3>
+
+      <div className="rounded-xl p-3 space-y-2.5" style={{ background: 'var(--bg-deep)' }}>
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-[0.82rem]">Otomatik inisiyatif</span>
+          <input
+            type="checkbox"
+            className="w-4 h-4 accent-current"
+            style={{ accentColor: 'var(--accent)' }}
+            checked={settings.autoRollInitiative}
+            onChange={(e) => setSettings({ autoRollInitiative: e.target.checked })}
+          />
+        </label>
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-[0.82rem]">HP çubukları</span>
+          <input
+            type="checkbox"
+            className="w-4 h-4"
+            style={{ accentColor: 'var(--accent)' }}
+            checked={settings.showHpBars}
+            onChange={(e) => setSettings({ showHpBars: e.target.checked })}
+          />
+        </label>
+      </div>
+
+      <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-deep)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[0.82rem] font-medium">Claude bağlantısı</p>
+            <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
+              İsteğe bağlı. Kapalıyken her şey yerelde çalışır.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            className="w-4 h-4"
+            style={{ accentColor: 'var(--accent)' }}
+            checked={settings.llmEnabled}
+            onChange={(e) => setSettings({ llmEnabled: e.target.checked })}
+          />
+        </div>
+        {settings.llmEnabled && (
+          <>
+            <div className="flex gap-1.5">
+              <input
+                className="field field-sm font-mono"
+                type={showKey ? 'text' : 'password'}
+                placeholder="sk-ant-…"
+                value={settings.llmKey}
+                onChange={(e) => setSettings({ llmKey: e.target.value })}
+              />
+              <button className="btn btn-icon" onClick={() => setShowKey((v) => !v)} aria-label="Anahtarı göster">
+                {showKey ? <Icons.eyeOff /> : <Icons.eye />}
+              </button>
+            </div>
+            <p className="text-[0.66rem] leading-snug" style={{ color: 'var(--ink-mute)' }}>
+              Anahtar yalnızca bu tarayıcıda saklanır ve doğrudan Anthropic'e gider — arada sunucumuz yok. Paylaşılan
+              bir bilgisayardaysan işin bitince temizle.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-deep)' }}>
+        <p className="text-[0.82rem] font-medium">Çevrimdışı önbellek</p>
+        <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
+          {stats.entries} sorgu · {(stats.bytes / 1024).toFixed(0)} KB. Açtığın her statblock burada kalır, internet
+          gidince de açılır.
+        </p>
+        <button
+          className="btn btn-xs"
+          onClick={() => {
+            clearCache()
+            setStats(cacheStats())
+          }}
+        >
+          <Icons.trash className="w-3 h-3" /> Önbelleği temizle
+        </button>
+      </div>
+
+      <p className="text-[0.66rem] leading-relaxed" style={{ color: 'var(--ink-mute)' }}>
+        İçerik <strong>Open5e</strong> üzerinden gelir: SRD 5.1 ve Kobold Press gibi açık lisanslı (OGL 1.0a / CC-BY-4.0 /
+        ORC) kaynaklar. Tüm veriler yalnızca bu tarayıcıda tutulur.
+      </p>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ panel */
+
+export function Campaign() {
+  const [danger, setDanger] = useState(false)
+
+  return (
+    <Panel
+      title="Kampanya"
+      subtitle="Grup, notlar, günlük, ayarlar"
+      icon={<Icons.users />}
+      className="lg:h-full"
+      bodyClass="p-3"
+    >
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-5">
+          <Party />
+          <Notes />
+        </div>
+        <div className="space-y-5">
+          <Log />
+          <SettingsBlock />
+          <button className="btn btn-xs" style={{ color: 'var(--rose)' }} onClick={() => setDanger(true)}>
+            <Icons.trash className="w-3 h-3" /> Her şeyi sıfırla
+          </button>
+        </div>
+      </div>
+
+      <Modal open={danger} onClose={() => setDanger(false)} title="Emin misin?">
+        <p className="text-[0.85rem] mb-4" style={{ color: 'var(--ink-soft)' }}>
+          Grup, notlar, günlük, homebrew derlemelerin ve ayarların dahil <strong>her şey</strong> silinir. Bu geri
+          alınamaz — homebrew paketlerini önce Ocak sekmesinden dışa aktarmak isteyebilirsin.
+        </p>
+        <div className="flex gap-2">
+          <button className="btn flex-1" onClick={() => setDanger(false)}>
+            Vazgeç
+          </button>
+          <button
+            className="btn flex-1"
+            style={{ background: 'var(--rose)', color: '#fff', borderColor: 'transparent' }}
+            onClick={() => {
+              localStorage.clear()
+              location.reload()
+            }}
+          >
+            Sil
+          </button>
+        </div>
+      </Modal>
+    </Panel>
+  )
+}
