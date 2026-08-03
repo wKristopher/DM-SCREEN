@@ -1,16 +1,19 @@
 /**
- * Unified search over Open5e plus everything in your own brew packs.
+ * Unified live search over both upstreams plus your own brew packs.
  *
- * Homebrew is matched locally and merged ahead of official results — if you
- * wrote your own goblin, that is the one you meant.
+ * Every keystroke queries the network — there is no "load once and read from
+ * storage" step. Results stream in as each source answers, so the fast SRD
+ * mirror paints in ~65ms on a warm connection and the full catalogue fills in
+ * behind it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  searchMonsters, searchSpells, searchMagicItems, listSources,
-  formatCr, OfflineError,
-  type Monster, type Spell, type MagicItem, type SourceDoc,
+  listSources, formatCr, OfflineError,
+  type Monster, type Spell, type MagicItem, type SourceDoc, type SourceId,
 } from '../lib/open5e'
+import { liveSearchMonsters, liveSearchSpells, liveSearchItems, warmUp, type SourceTiming } from '../lib/live'
+import * as srdApi from '../lib/dnd5eapi'
 import { useStore, useHomebrewMonsters, useHomebrewSpells, useHomebrewItems } from '../store/useStore'
 import { StatBlock, SpellCard, ItemCard } from './StatBlock'
 import { Icons, Panel, Empty, Spinner, Modal } from './ui'
@@ -23,8 +26,38 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'items', label: 'Eşyalar' },
 ]
 
+const SOURCE_LABEL: Record<SourceId, string> = {
+  dnd5eapi: 'SRD (hızlı)',
+  open5e: 'Open5e',
+  homebrew: 'homebrew',
+}
+
+/**
+ * Warm connections dominated by round trip, not handshake, so this only needs
+ * to be long enough to skip the middle of a word.
+ */
+const DEBOUNCE_MS = 150
+
 function matches(name: string, q: string): boolean {
   return name.toLocaleLowerCase('tr').includes(q.toLocaleLowerCase('tr'))
+}
+
+function TimingBar({ timings, pending }: { timings: SourceTiming[]; pending: boolean }) {
+  if (!timings.length && !pending) return null
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {timings.map((t) => (
+        <span
+          key={t.source}
+          className={`chip ${t.error ? 'chip-rose' : t.ms < 150 ? 'chip-sage' : t.ms < 600 ? 'chip-accent' : 'chip-mute'}`}
+          title={t.error ?? `${t.count} sonuç`}
+        >
+          {SOURCE_LABEL[t.source]} {t.error ? '✕' : `${t.ms}ms`}
+        </span>
+      ))}
+      {pending && <span className="chip chip-mute animate-pulse-soft">bekleniyor…</span>}
+    </div>
+  )
 }
 
 export function Compendium({ initialQuery, initialTab }: { initialQuery?: string; initialTab?: Tab }) {
@@ -32,7 +65,6 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
   const [query, setQuery] = useState(initialQuery ?? '')
   const [cr, setCr] = useState('')
   const [level, setLevel] = useState('')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceDoc[]>([])
   const [showSources, setShowSources] = useState(false)
@@ -40,6 +72,8 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
   const [monsters, setMonsters] = useState<Monster[]>([])
   const [spells, setSpells] = useState<Spell[]>([])
   const [items, setItems] = useState<MagicItem[]>([])
+  const [timings, setTimings] = useState<SourceTiming[]>([])
+  const [pending, setPending] = useState(false)
   const [selected, setSelected] = useState<Monster | Spell | MagicItem | null>(null)
 
   const settings = useStore((s) => s.settings)
@@ -50,10 +84,10 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
   const hbSpells = useHomebrewSpells()
   const hbItems = useHomebrewItems()
 
-  // Guards against a slow early request overwriting a newer one's results.
-  const reqId = useRef(0)
+  const abort = useRef<AbortController | null>(null)
 
   useEffect(() => {
+    warmUp()
     listSources().then(setSources).catch(() => setSources([]))
   }, [])
 
@@ -62,65 +96,94 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
     if (initialTab) setTab(initialTab)
   }, [initialQuery, initialTab])
 
-  const search = useCallback(async () => {
-    const id = ++reqId.current
-    setLoading(true)
+  const search = useCallback(() => {
+    abort.current?.abort()
+    const controller = new AbortController()
+    abort.current = controller
+
     setError(null)
-    try {
-      if (tab === 'monsters') {
-        const res = await searchMonsters({
-          search: query,
-          cr: cr || undefined,
-          documents: settings.sources,
-          limit: 40,
-        })
-        if (id === reqId.current) setMonsters(res.results)
-      } else if (tab === 'spells') {
-        const res = await searchSpells({
-          search: query,
-          level: level === '' ? undefined : parseInt(level, 10),
-          documents: settings.sources,
-          limit: 40,
-        })
-        if (id === reqId.current) setSpells(res.results)
-      } else {
-        const res = await searchMagicItems({ search: query, documents: settings.sources, limit: 40 })
-        if (id === reqId.current) setItems(res.results)
-      }
-    } catch (err) {
-      if (id !== reqId.current) return
+    setPending(true)
+    setTimings([])
+
+    const docs = settings.sources
+    const onError = (err: unknown) => {
+      if (controller.signal.aborted) return
       setError(
         err instanceof OfflineError
-          ? 'Çevrimdışısın — sadece homebrew ve daha önce açtıkların görünür.'
+          ? 'Çevrimdışısın — homebrew ve son görülenler gösteriliyor.'
           : err instanceof Error
             ? err.message
             : 'Arama başarısız',
       )
-    } finally {
-      if (id === reqId.current) setLoading(false)
     }
-  }, [tab, query, cr, level, settings.sources])
 
-  // Debounce so typing "goblin" is one request, not six.
+    if (tab === 'monsters') {
+      liveSearchMonsters(
+        { search: query, cr: cr || undefined, documents: docs, fast: settings.fastSource },
+        [],
+        (snap) => {
+          setMonsters(snap.items)
+          setTimings(snap.timings)
+          setPending(snap.pending)
+        },
+        controller.signal,
+      ).catch(onError)
+    } else if (tab === 'spells') {
+      liveSearchSpells(
+        { search: query, level: level === '' ? undefined : parseInt(level, 10), documents: docs, fast: settings.fastSource },
+        [],
+        (snap) => {
+          setSpells(snap.items)
+          setTimings(snap.timings)
+          setPending(snap.pending)
+        },
+        controller.signal,
+      ).catch(onError)
+    } else {
+      liveSearchItems(
+        { search: query, documents: docs },
+        [],
+        (snap) => {
+          setItems(snap.items)
+          setTimings(snap.timings)
+          setPending(snap.pending)
+        },
+        controller.signal,
+      ).catch(onError)
+    }
+  }, [tab, query, cr, level, settings.sources, settings.fastSource])
+
   useEffect(() => {
-    const t = window.setTimeout(search, 320)
+    const t = window.setTimeout(search, DEBOUNCE_MS)
     return () => window.clearTimeout(t)
   }, [search])
+
+  // Cancel any in-flight request when the panel goes away.
+  useEffect(() => () => abort.current?.abort(), [])
 
   const results = useMemo(() => {
     if (tab === 'monsters') {
       const local = hbMonsters.filter((m) => (!query || matches(m.name, query)) && (!cr || String(m.cr) === cr))
-      return [...local, ...monsters.filter((m) => !local.some((l) => l.name === m.name))]
+      return [...local, ...monsters]
     }
     if (tab === 'spells') {
       const local = hbSpells.filter(
         (sp) => (!query || matches(sp.name, query)) && (level === '' || sp.level_int === parseInt(level, 10)),
       )
-      return [...local, ...spells.filter((sp) => !local.some((l) => l.name === sp.name))]
+      return [...local, ...spells]
     }
     const local = hbItems.filter((it) => !query || matches(it.name, query))
-    return [...local, ...items.filter((it) => !local.some((l) => l.name === it.name))]
+    return [...local, ...items]
   }, [tab, query, cr, level, monsters, spells, items, hbMonsters, hbSpells, hbItems])
+
+  /**
+   * Warm the detail record while the pointer is on its way to the click.
+   * Costs one cheap request and removes the wait from opening a statblock.
+   */
+  const prefetch = (r: Monster | Spell | MagicItem) => {
+    if (r.source !== 'dnd5eapi') return
+    if ('challenge_rating' in r) void srdApi.getMonster(r.slug).catch(() => undefined)
+  }
 
   const toggleSource = (slug: string) => {
     const cur = settings.sources
@@ -130,12 +193,17 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
   return (
     <Panel
       title="Derleme"
-      subtitle={`${results.length} sonuç${settings.sources.length ? ` · ${settings.sources.length} kaynak` : ' · tüm kaynaklar'}`}
+      subtitle={`${results.length} sonuç · canlı${settings.sources.length ? ` · ${settings.sources.length} kitap` : ''}`}
       icon={<Icons.book />}
       actions={
-        <button className="btn btn-xs" onClick={() => setShowSources(true)}>
-          Kaynaklar
-        </button>
+        <>
+          <button className="btn btn-ghost btn-icon" onClick={search} title="Yenile">
+            <Icons.refresh className={pending ? 'animate-pulse-soft' : ''} />
+          </button>
+          <button className="btn btn-xs" onClick={() => setShowSources(true)}>
+            Kaynaklar
+          </button>
+        </>
       }
       className="lg:h-full"
       bodyClass="p-3 space-y-2.5"
@@ -192,14 +260,16 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
         )}
       </div>
 
+      {settings.showTimings && <TimingBar timings={timings} pending={pending} />}
+
       {error && (
         <p className="text-[0.75rem] px-2 py-1.5 rounded-lg" style={{ background: 'var(--rose-wash)', color: 'var(--rose)' }}>
           {error}
         </p>
       )}
 
-      {loading && !results.length ? (
-        <Spinner />
+      {pending && !results.length ? (
+        <Spinner label="Kaynaklara soruluyor…" />
       ) : results.length === 0 ? (
         <Empty icon={<Icons.search className="w-8 h-8" />} title="Sonuç yok" hint="Aramayı sadeleştir veya kaynak filtresini genişlet." />
       ) : (
@@ -209,9 +279,11 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
             const isSpell = 'level_int' in r
             return (
               <div
-                key={r.slug}
-                className="group flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors"
+                key={`${r.source ?? 'hb'}:${r.slug}`}
+                className="group flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors animate-fade"
                 style={{ background: 'var(--bg-deep)' }}
+                onMouseEnter={() => prefetch(r)}
+                onFocus={() => prefetch(r)}
                 onClick={() => setSelected(r)}
               >
                 <div className="min-w-0 flex-1">
@@ -290,7 +362,9 @@ export function Compendium({ initialQuery, initialTab }: { initialQuery?: string
                 onClick={() => toggleSource(s.slug)}
               >
                 <span className="text-[0.82rem] font-medium truncate">{s.title}</span>
-                <span className="chip chip-mute shrink-0">{s.license?.includes('ORC') ? 'ORC' : s.license?.includes('Creative') ? 'CC' : 'OGL'}</span>
+                <span className="chip chip-mute shrink-0">
+                  {s.license?.includes('ORC') ? 'ORC' : s.license?.includes('Creative') ? 'CC' : 'OGL'}
+                </span>
               </button>
             )
           })}

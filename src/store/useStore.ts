@@ -12,6 +12,8 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { Monster } from '../lib/open5e'
 import { passivePerception } from '../lib/open5e'
 import type { BrewPack } from '../lib/homebrew'
+import type { ProviderId } from '../lib/ai/providers'
+import { PROVIDERS } from '../lib/ai/providers'
 import { emptyPack, tablesToExtra } from '../lib/homebrew'
 import { roll, abilityMod } from '../lib/dice'
 import type { RollResult } from '../lib/dice'
@@ -70,14 +72,27 @@ export interface LogEntry {
 
 export type ThemeName = 'dusk' | 'parchment'
 
+/** Keys are held per provider so switching between them doesn't lose any. */
+export interface LlmSettings {
+  enabled: boolean
+  provider: ProviderId
+  keys: Partial<Record<ProviderId, string>>
+  models: Partial<Record<ProviderId, string>>
+  /** Only meaningful for the OpenAI-compatible provider. */
+  baseUrl: string
+}
+
 export interface Settings {
   theme: ThemeName
   /** Open5e document slugs to include in searches; empty means all. */
   sources: string[]
-  llmKey: string
-  llmEnabled: boolean
+  llm: LlmSettings
   autoRollInitiative: boolean
   showHpBars: boolean
+  /** Race the fast SRD mirror alongside the full catalogue. */
+  fastSource: boolean
+  /** Surface per-source response times in the compendium header. */
+  showTimings: boolean
 }
 
 interface State {
@@ -157,10 +172,17 @@ function uniqueName(existing: Combatant[], base: string): string {
 const DEFAULT_SETTINGS: Settings = {
   theme: 'dusk',
   sources: [],
-  llmKey: '',
-  llmEnabled: false,
+  llm: {
+    enabled: false,
+    provider: 'anthropic',
+    keys: {},
+    models: {},
+    baseUrl: PROVIDERS.compatible.defaultBaseUrl,
+  },
   autoRollInitiative: true,
   showHpBars: true,
+  fastSource: true,
+  showTimings: true,
 }
 
 /* ------------------------------------------------------------------ store */
@@ -462,10 +484,25 @@ export const useStore = create<State>()(
       merge: (persisted, current) => {
         // Settings gain fields between releases; keep defaults for new ones.
         const p = (persisted ?? {}) as Partial<State>
+        const saved = (p.settings ?? {}) as Partial<Settings> & {
+          // Pre-multi-provider shape, carried forward so an existing key survives.
+          llmKey?: string
+          llmEnabled?: boolean
+        }
+
+        const llm: LlmSettings = {
+          ...DEFAULT_SETTINGS.llm,
+          ...(saved.llm ?? {}),
+        }
+        if (!saved.llm && saved.llmKey) {
+          llm.keys = { anthropic: saved.llmKey }
+          llm.enabled = saved.llmEnabled ?? false
+        }
+
         return {
           ...current,
           ...p,
-          settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) },
+          settings: { ...DEFAULT_SETTINGS, ...saved, llm },
         }
       },
     },

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { clearCache, cacheStats } from '../lib/open5e'
+import { PROVIDERS, PROVIDER_ORDER, testConnection, LlmError } from '../lib/ai/providers'
 import { Icons, Panel, Empty, Field, Modal } from './ui'
 
 /* ------------------------------------------------------------------ party */
@@ -176,12 +177,166 @@ function Log() {
   )
 }
 
+/* ------------------------------------------------------------------ llm */
+
+function LlmSettingsBlock() {
+  const llm = useStore((s) => s.settings.llm)
+  const setSettings = useStore((s) => s.setSettings)
+  const [showKey, setShowKey] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const def = PROVIDERS[llm.provider]
+  const key = llm.keys[llm.provider] ?? ''
+  const model = llm.models[llm.provider] ?? def.defaultModel
+
+  const patch = (p: Partial<typeof llm>) => setSettings({ llm: { ...llm, ...p } })
+
+  const runTest = async () => {
+    setTesting(true)
+    setResult(null)
+    try {
+      const text = await testConnection({
+        provider: llm.provider,
+        apiKey: key,
+        model,
+        baseUrl: def.configurableBaseUrl ? llm.baseUrl : undefined,
+      })
+      setResult({ ok: true, text })
+    } catch (e) {
+      setResult({ ok: false, text: e instanceof LlmError ? e.message : 'Beklenmeyen hata' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl p-3 space-y-2.5" style={{ background: 'var(--bg-deep)' }}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[0.82rem] font-medium">Yapay zekâ bağlantısı</p>
+          <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
+            İsteğe bağlı. Kapalıyken Kâhin yine de tam çalışır.
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          className="w-4 h-4"
+          style={{ accentColor: 'var(--accent)' }}
+          checked={llm.enabled}
+          onChange={(e) => patch({ enabled: e.target.checked })}
+        />
+      </div>
+
+      {llm.enabled && (
+        <>
+          <div className="flex gap-1 p-1 rounded-full" style={{ background: 'var(--surface-2)' }}>
+            {PROVIDER_ORDER.map((id) => (
+              <button
+                key={id}
+                className="flex-1 py-1 rounded-full text-[0.72rem] font-medium transition-all whitespace-nowrap"
+                style={
+                  llm.provider === id
+                    ? { background: 'var(--raised)', color: 'var(--accent)', boxShadow: 'var(--shadow-soft)' }
+                    : { color: 'var(--ink-mute)' }
+                }
+                onClick={() => {
+                  patch({ provider: id })
+                  setResult(null)
+                }}
+              >
+                {PROVIDERS[id].label}
+                {llm.keys[id] ? ' ✓' : ''}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-1.5">
+            <input
+              className="field field-sm font-mono"
+              type={showKey ? 'text' : 'password'}
+              placeholder={def.keyPlaceholder}
+              value={key}
+              onChange={(e) => patch({ keys: { ...llm.keys, [llm.provider]: e.target.value } })}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button className="btn btn-icon" onClick={() => setShowKey((v) => !v)} aria-label="Anahtarı göster">
+              {showKey ? <Icons.eyeOff /> : <Icons.eye />}
+            </button>
+          </div>
+
+          {def.models.length > 0 ? (
+            <Field label="Model">
+              <select
+                className="field field-sm"
+                value={model}
+                onChange={(e) => patch({ models: { ...llm.models, [llm.provider]: e.target.value } })}
+              >
+                {def.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                    {m.note ? ` — ${m.note}` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Model">
+              <input
+                className="field field-sm font-mono"
+                placeholder="ör. meta-llama/llama-4-70b"
+                value={model}
+                onChange={(e) => patch({ models: { ...llm.models, [llm.provider]: e.target.value } })}
+              />
+            </Field>
+          )}
+
+          {def.configurableBaseUrl && (
+            <Field label="Adres" hint="/v1/chat/completions bu adrese eklenir">
+              <input
+                className="field field-sm font-mono"
+                placeholder={def.defaultBaseUrl}
+                value={llm.baseUrl}
+                onChange={(e) => patch({ baseUrl: e.target.value })}
+              />
+            </Field>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button className="btn btn-xs" disabled={testing || !key.trim()} onClick={runTest}>
+              {testing ? 'Deneniyor…' : 'Bağlantıyı dene'}
+            </button>
+            {result && (
+              <span
+                className={`chip ${result.ok ? 'chip-sage' : 'chip-rose'} max-w-52 truncate`}
+                title={result.text}
+              >
+                {result.text}
+              </span>
+            )}
+          </div>
+
+          <p className="text-[0.66rem] leading-snug" style={{ color: 'var(--ink-mute)' }}>
+            Anahtar yalnızca bu tarayıcıda saklanır ve doğrudan sağlayıcıya gider — arada sunucumuz yok. Paylaşılan bir
+            bilgisayardaysan işin bitince temizle.
+            <br />
+            {def.hint} —{' '}
+            <a href={def.keyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+              anahtar al ↗
+            </a>
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ settings */
 
 function SettingsBlock() {
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
-  const [showKey, setShowKey] = useState(false)
   const [stats, setStats] = useState(() => cacheStats())
 
   return (
@@ -211,49 +366,47 @@ function SettingsBlock() {
         </label>
       </div>
 
-      <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-deep)' }}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[0.82rem] font-medium">Claude bağlantısı</p>
-            <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
-              İsteğe bağlı. Kapalıyken her şey yerelde çalışır.
-            </p>
-          </div>
+      <LlmSettingsBlock />
+
+      <div className="rounded-xl p-3 space-y-2.5" style={{ background: 'var(--bg-deep)' }}>
+        <p className="text-[0.82rem] font-medium">Veri kaynakları</p>
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-[0.8rem]">
+            Hızlı SRD aynası
+            <span className="block text-[0.66rem]" style={{ color: 'var(--ink-mute)' }}>
+              dnd5eapi.co ile yarıştır — sıcak bağlantıda ~65ms
+            </span>
+          </span>
           <input
             type="checkbox"
             className="w-4 h-4"
             style={{ accentColor: 'var(--accent)' }}
-            checked={settings.llmEnabled}
-            onChange={(e) => setSettings({ llmEnabled: e.target.checked })}
+            checked={settings.fastSource}
+            onChange={(e) => setSettings({ fastSource: e.target.checked })}
           />
-        </div>
-        {settings.llmEnabled && (
-          <>
-            <div className="flex gap-1.5">
-              <input
-                className="field field-sm font-mono"
-                type={showKey ? 'text' : 'password'}
-                placeholder="sk-ant-…"
-                value={settings.llmKey}
-                onChange={(e) => setSettings({ llmKey: e.target.value })}
-              />
-              <button className="btn btn-icon" onClick={() => setShowKey((v) => !v)} aria-label="Anahtarı göster">
-                {showKey ? <Icons.eyeOff /> : <Icons.eye />}
-              </button>
-            </div>
-            <p className="text-[0.66rem] leading-snug" style={{ color: 'var(--ink-mute)' }}>
-              Anahtar yalnızca bu tarayıcıda saklanır ve doğrudan Anthropic'e gider — arada sunucumuz yok. Paylaşılan
-              bir bilgisayardaysan işin bitince temizle.
-            </p>
-          </>
-        )}
+        </label>
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-[0.8rem]">
+            Yanıt sürelerini göster
+            <span className="block text-[0.66rem]" style={{ color: 'var(--ink-mute)' }}>
+              Derleme başlığında her kaynağın ms değeri
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="w-4 h-4"
+            style={{ accentColor: 'var(--accent)' }}
+            checked={settings.showTimings}
+            onChange={(e) => setSettings({ showTimings: e.target.checked })}
+          />
+        </label>
       </div>
 
       <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-deep)' }}>
-        <p className="text-[0.82rem] font-medium">Çevrimdışı önbellek</p>
+        <p className="text-[0.82rem] font-medium">Çevrimdışı yedek</p>
         <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
-          {stats.entries} sorgu · {(stats.bytes / 1024).toFixed(0)} KB. Açtığın her statblock burada kalır, internet
-          gidince de açılır.
+          {stats.entries} sorgu · {(stats.bytes / 1024).toFixed(0)} KB. Arama her zaman canlı yapılır; bu kayıt
+          yalnızca internet gittiğinde devreye girer.
         </p>
         <button
           className="btn btn-xs"

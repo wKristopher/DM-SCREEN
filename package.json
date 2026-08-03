@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs",
+    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs test/sources.test.mjs test/providers.test.mjs",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "repository": {
@@ -24,7 +24,6 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"

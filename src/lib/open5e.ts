@@ -13,7 +13,13 @@
 
 export const API_ROOT = 'https://api.open5e.com/v1'
 
+/** Host of the fast SRD mirror, re-exported so the warm-up has one import. */
+export const DND5EAPI_PRECONNECT = 'https://www.dnd5eapi.co'
+
 export type ResourceKind = 'monsters' | 'spells' | 'magicitems' | 'conditions' | 'sections' | 'feats' | 'races' | 'classes' | 'backgrounds' | 'planes' | 'weapons' | 'armor'
+
+/** Which upstream answered. Used for dedupe, latency display and prefetching. */
+export type SourceId = 'open5e' | 'dnd5eapi' | 'homebrew'
 
 /** A source book, as Open5e models it. */
 export interface SourceDoc {
@@ -69,6 +75,8 @@ export interface Monster {
   document__title: string
   /** Set locally for user-authored creatures. */
   homebrew?: boolean
+  /** Which upstream produced this record. */
+  source?: SourceId
 }
 
 export interface NamedEntry {
@@ -97,6 +105,7 @@ export interface Spell {
   document__slug: string
   document__title: string
   homebrew?: boolean
+  source?: SourceId
 }
 
 export interface MagicItem {
@@ -109,6 +118,7 @@ export interface MagicItem {
   document__slug: string
   document__title: string
   homebrew?: boolean
+  source?: SourceId
 }
 
 export interface Condition {
@@ -237,30 +247,84 @@ export class OfflineError extends Error {
  */
 const REQUEST_TIMEOUT_MS = 12_000
 
-async function apiGet<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+export interface FetchOptions {
+  signal?: AbortSignal
+  /**
+   * Serve a cached copy instead of going to the network. The app runs
+   * live-first, so this is only for the offline fallback path.
+   */
+  allowCache?: boolean
+}
+
+/** Peek at the cache without touching the network — used for instant first paint. */
+export function peekCache<T>(path: string, params: Record<string, string | number | undefined> = {}): T | null {
+  return cacheGet<T>(buildKey(path, params))
+}
+
+function buildUrl(path: string, params: Record<string, string | number | undefined>): URL {
   const url = new URL(`${API_ROOT}/${path}`)
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== '') url.searchParams.set(k, String(v))
   }
-  const key = url.toString().replace(API_ROOT, '')
+  return url
+}
 
-  const cached = cacheGet<T>(key)
-  if (cached) return cached
+function buildKey(path: string, params: Record<string, string | number | undefined>): string {
+  return buildUrl(path, params).toString().replace(API_ROOT, '')
+}
 
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new OfflineError()
+/**
+ * In-flight request sharing. Two panels asking for the same thing in the same
+ * tick should cost one round trip, not two.
+ */
+const inflight = new Map<string, Promise<unknown>>()
+
+async function apiGet<T>(
+  path: string,
+  params: Record<string, string | number | undefined> = {},
+  opts: FetchOptions = {},
+): Promise<T> {
+  const url = buildUrl(path, params)
+  const key = buildKey(path, params)
+
+  if (opts.allowCache) {
+    const cached = cacheGet<T>(key)
+    if (cached) return cached
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const cached = cacheGet<T>(key)
+    if (cached) return cached
+    throw new OfflineError()
+  }
+
+  const existing = inflight.get(key)
+  if (existing) return existing as Promise<T>
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  opts.signal?.addEventListener('abort', () => controller.abort(), { once: true })
+
+  const run = (async () => {
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(`Open5e ${res.status}: ${res.statusText}`)
+      const data = (await res.json()) as T
+      cacheSet(key, data)
+      return data
+    } finally {
+      clearTimeout(timer)
+      inflight.delete(key)
+    }
+  })()
+
+  inflight.set(key, run)
 
   try {
-    const res = await fetch(url.toString(), {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-    if (!res.ok) throw new Error(`Open5e ${res.status}: ${res.statusText}`)
-    const data = (await res.json()) as T
-    cacheSet(key, data)
-    return data
+    return await run
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new Error('Kaynak zaman aşımına uğradı — bağlantını kontrol et.')
@@ -277,8 +341,15 @@ async function apiGet<T>(path: string, params: Record<string, string | number | 
 /* ------------------------------------------------------------------ queries */
 
 export async function listSources(): Promise<SourceDoc[]> {
-  const data = await apiGet<Paged<SourceDoc>>('documents/', { limit: 60 })
+  // The book list genuinely never changes mid-session, so this one may cache.
+  const data = await apiGet<Paged<SourceDoc>>('documents/', { limit: 60 }, { allowCache: true })
   return data.results
+}
+
+/** Stamp provenance so merged results can be deduped and attributed. */
+function tag<T extends { source?: SourceId }>(items: T[]): T[] {
+  for (const it of items) it.source = 'open5e'
+  return items
 }
 
 export interface MonsterQuery {
@@ -293,8 +364,8 @@ export interface MonsterQuery {
   page?: number
 }
 
-export async function searchMonsters(q: MonsterQuery): Promise<Paged<Monster>> {
-  return apiGet<Paged<Monster>>('monsters/', {
+export async function searchMonsters(q: MonsterQuery, opts: FetchOptions = {}): Promise<Paged<Monster>> {
+  const data = await apiGet<Paged<Monster>>('monsters/', {
     name__icontains: q.search || undefined,
     cr: q.cr,
     cr__gte: q.crGte,
@@ -304,11 +375,12 @@ export async function searchMonsters(q: MonsterQuery): Promise<Paged<Monster>> {
     ordering: q.ordering ?? 'name',
     limit: q.limit ?? 30,
     page: q.page,
-  })
+  }, opts)
+  return { ...data, results: tag(data.results) }
 }
 
-export async function getMonster(slug: string): Promise<Monster> {
-  return apiGet<Monster>(`monsters/${slug}/`)
+export async function getMonster(slug: string, opts: FetchOptions = {}): Promise<Monster> {
+  return apiGet<Monster>(`monsters/${slug}/`, {}, opts)
 }
 
 export interface SpellQuery {
@@ -321,8 +393,8 @@ export interface SpellQuery {
   page?: number
 }
 
-export async function searchSpells(q: SpellQuery): Promise<Paged<Spell>> {
-  return apiGet<Paged<Spell>>('spells/', {
+export async function searchSpells(q: SpellQuery, opts: FetchOptions = {}): Promise<Paged<Spell>> {
+  const data = await apiGet<Paged<Spell>>('spells/', {
     name__icontains: q.search || undefined,
     level_int: q.level,
     school__icontains: q.school || undefined,
@@ -331,7 +403,8 @@ export async function searchSpells(q: SpellQuery): Promise<Paged<Spell>> {
     ordering: 'level_int,name',
     limit: q.limit ?? 30,
     page: q.page,
-  })
+  }, opts)
+  return { ...data, results: tag(data.results) }
 }
 
 export async function searchMagicItems(q: {
@@ -340,19 +413,20 @@ export async function searchMagicItems(q: {
   documents?: string[]
   limit?: number
   page?: number
-}): Promise<Paged<MagicItem>> {
-  return apiGet<Paged<MagicItem>>('magicitems/', {
+}, opts: FetchOptions = {}): Promise<Paged<MagicItem>> {
+  const data = await apiGet<Paged<MagicItem>>('magicitems/', {
     name__icontains: q.search || undefined,
     rarity__icontains: q.rarity || undefined,
     document__slug__in: q.documents?.length ? q.documents.join(',') : undefined,
     ordering: 'name',
     limit: q.limit ?? 30,
     page: q.page,
-  })
+  }, opts)
+  return { ...data, results: tag(data.results) }
 }
 
 export async function listConditions(): Promise<Condition[]> {
-  const data = await apiGet<Paged<Condition>>('conditions/', { limit: 40 })
+  const data = await apiGet<Paged<Condition>>('conditions/', { limit: 40 }, { allowCache: true })
   return data.results
 }
 

@@ -50,7 +50,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # zar motoru + niyet yönlendirici testleri
+npm run test       # 145 test: zar, niyet yönlendirici, şema, sağlayıcılar
 npm run check      # typecheck + test + build
 ```
 
@@ -59,25 +59,50 @@ kendi sunucuna koyabilirsin. Backend gerekmez.
 
 ---
 
-## Veri kaynakları
+## Veri kaynakları — canlı
 
-İçerik [Open5e](https://open5e.com) üzerinden gelir — yalnızca **açık lisanslı**
-materyal:
+Arama her tuş vuruşunda **ağdan** yapılır; "bir kere indir, kayıttan oku" adımı
+yok. İki kaynak paralel yarıştırılır ve sonuçlar geldikçe akar:
 
-- **SRD 5.1** (OGL 1.0a) — çekirdek kurallar, yaratıklar, büyüler
-- **Kobold Press** — Tome of Beasts 1–3, Creature Codex, Deep Magic, Vault of Magic (OGL)
-- **Level Up: Advanced 5e** (CC-BY-4.0)
-- **Black Flag SRD** (ORC)
-- **Critical Role: Tal'Dorei** (OGL)
+| Kaynak | Kapsam | Sıcak bağlantı |
+|---|---|---|
+| [dnd5eapi.co](https://www.dnd5eapi.co) | SRD 5.1 (~330 yaratık, ~320 büyü) | **~65ms** |
+| [Open5e](https://open5e.com) | 3.200+ yaratık, 1.400+ büyü, 17 kitap | ~500ms |
 
-Hangi kitapların taranacağını Derleme → Kaynaklar'dan seçebilirsin.
+Yani hızlı kaynak neredeyse anında boyanır, geniş katalog arkadan doldurur.
+Derleme başlığındaki rozetler her kaynağın gerçek ms değerini gösterir.
 
-> Kapalı lisanslı içerik (yayıncının satın alınması gereken kitapları) bilerek
-> dahil edilmedi. Onları kullanmak istiyorsan, sahip olduğun materyali Ocak
-> sekmesinden kendi derlemene girebilirsin.
+**Gecikme nereden geliyor:** ölçümde TLS el sıkışması maliyetin ~%90'ı çıktı
+(dnd5eapi soğuk 684ms → sıcak 65ms; Open5e 1012ms → ~500ms). Bu yüzden:
 
-**Çevrimdışı:** Açtığın her şey `localStorage`'a önbelleklenir ve internet gidince
-de açılır. Ekran sekmesi ve Kâhin zaten hiç ağ kullanmaz.
+- `<link rel="preconnect">` ile iki bağlantı da sayfa açılırken kurulur
+- açılışta minik bir istekle HTTP/2 oturumu tam ısıtılır
+- yalnızca CORS-güvenli başlık gönderilir → `OPTIONS` ön-uçuşu hiç olmaz
+- aynı sorgu uçuştayken paylaşılır, eskiyen istek iptal edilir
+- fareyi bir satırın üstüne getirince statblock önceden çekilir
+
+Açık lisanslı içerik: **SRD 5.1** (OGL 1.0a), **Kobold Press** (Tome of Beasts 1–3,
+Creature Codex, Deep Magic, Vault of Magic), **Level Up: A5e** (CC-BY-4.0),
+**Black Flag SRD** (ORC), **Critical Role: Tal'Dorei**. Hangi kitapların
+taranacağını Derleme → Kaynaklar'dan seçebilirsin.
+
+### Neden 5e.tools değil
+
+Denendi ve ölçüldü — tarayıcıdan teknik olarak mümkün değil:
+
+- Her veri yoluna Cloudflare bot doğrulaması dönüyor (`cf-mitigated: challenge`,
+  HTTP 403). JSON değil, doğrulama sayfası geliyor.
+- Hiç `access-control-allow-origin` başlığı yok, üstüne
+  `cross-origin-embedder-policy: require-corp` — yani tarayıcı yanıtı okumayı
+  zaten engeller.
+
+Aşmanın tek yolu, bot korumasını kandıran sunucu tarafı bir vekil yazmak olurdu;
+bu hem araya bir sıçrama daha ekleyip **gecikmeyi artırır** hem de telifli
+içeriği yeniden dağıtmak olur. Sahip olduğun kitapların içeriğini Ocak
+sekmesinden kendi derlemene girebilirsin.
+
+**Çevrimdışı:** görülen yanıtlar `localStorage`'a yedeklenir; bu kayıt yalnızca
+internet gittiğinde devreye girer. Ekran sekmesi ve Kâhin zaten hiç ağ kullanmaz.
 
 ---
 
@@ -97,15 +122,30 @@ aktarılır — arkadaşınla paylaşman için.
 
 ---
 
-## İsteğe bağlı: Claude
+## İsteğe bağlı: yapay zekâ
 
-Kâhin'in tamamı **anahtar gerektirmeden** çalışır. İstersen Kampanya → Ayarlar'dan
-bir Anthropic API anahtarı ekleyip serbest metin de aldırabilirsin: betimleme,
+Kâhin'in tamamı **anahtar gerektirmeden** çalışır. İstersen Kampanya →
+Ayarlar'dan bir sağlayıcı bağlayıp serbest metin de aldırabilirsin: betimleme,
 NPC replikleri, seans özeti.
 
-Anahtar yalnızca senin tarayıcında saklanır ve doğrudan Anthropic'e gider —
-arada sunucu yok. SDK ayrı bir parçaya bölünmüştür, bu özelliği açmazsan hiç
-indirilmez.
+| Sağlayıcı | Modeller |
+|---|---|
+| **Claude** | Opus 5, Sonnet 5, Haiku 4.5 |
+| **ChatGPT** | GPT-5.6 Sol / Terra / Luna |
+| **Gemini** | 3.6 Flash, 3.5 Flash-Lite |
+| **OpenAI uyumlu** | OpenRouter, Groq, Together, LM Studio, Ollama… (adres + model kendin girersin) |
+
+Her sağlayıcının anahtarı ayrı tutulur, aralarında geçiş yapınca kaybolmaz.
+"Bağlantıyı dene" düğmesi tek küçük istekle anahtarı ve gecikmeyi doğrular.
+
+Anahtar yalnızca senin tarayıcında saklanır ve doğrudan sağlayıcıya gider —
+arada sunucu yok. Üçünün de tarayıcıdan doğrudan çağrıya izin verdiği CORS
+ön-uçuşu ile teyit edildi; bu yüzden üç ayrı SDK yerine tek ince `fetch`
+katmanı var (paket ~167KB daha küçük).
+
+> OpenAI hata yanıtlarında CORS başlığı göndermiyor, bu yüzden geçersiz anahtar
+> tarayıcıya opak bir ağ hatası olarak düşüyor. Uygulama bu durumu tanıyıp
+> "büyük ihtimalle anahtar geçersiz" diye söylüyor.
 
 ---
 
@@ -117,19 +157,24 @@ indirilmez.
 - Dış font/ikon/görsel yok: ikonlar satır içi SVG, doku SVG filtresi
 - Zar motoru `kh/kl/dh/dl`, `r/ro`, `!`, `min/max`, parantez ve karma terimleri
   destekler; zarlar `crypto.getRandomValues` ile ret örneklemesi kullanır
+- Dış SDK yok: üç LLM sağlayıcısı da tek SSE çözümleyicisiyle ham `fetch`
+  üzerinden konuşur
 
 ```
 src/
   lib/
     dice.ts        zar ifadesi çözümleyici
-    open5e.ts      API istemcisi + önbellek
+    open5e.ts      Open5e istemcisi + çevrimdışı yedek
+    dnd5eapi.ts    hızlı SRD aynası (şema normalizasyonu)
+    live.ts        kaynak yarıştırma, ölçüm, ısıtma
     srd.ts         çevrimdışı başvuru tabloları
     homebrew.ts    derleme şeması, içe/dışa aktarma
     ai/
       tables.ts    üretici veri bankaları
       generators.ts üreticiler
       oracle.ts    komut çubuğu niyet yönlendirici
-      llm.ts       isteğe bağlı Claude köprüsü
+      providers.ts Claude / ChatGPT / Gemini / uyumlu köprü
+      llm.ts       istem katmanı
   store/           zustand store'ları
   components/      paneller
 ```

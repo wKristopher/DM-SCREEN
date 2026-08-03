@@ -1,27 +1,14 @@
 /**
- * Optional Claude bridge.
+ * Prompt layer for the optional LLM assistant.
  *
  * The local oracle handles everything the table needs at speed. This adds the
- * one thing tables can't do: freeform prose in your campaign's own voice.
- *
- * It is strictly opt-in — the app is fully functional with no key. The SDK is
- * dynamically imported so it never lands in the main bundle for the (majority
- * of) users who never turn this on.
+ * one thing tables can't do: freeform prose in your campaign's own voice —
+ * through whichever provider the DM has a key for.
  */
 
-const MODEL = 'claude-opus-5'
+import { runCompletion, LlmError, type LlmConfig, type RunOptions } from './providers'
 
-export interface LlmSettings {
-  apiKey: string
-  enabled: boolean
-}
-
-export type LlmTask =
-  | 'narrate'
-  | 'npc-voice'
-  | 'expand'
-  | 'improvise'
-  | 'recap'
+export type LlmTask = 'narrate' | 'npc-voice' | 'expand' | 'improvise' | 'recap'
 
 const SYSTEM_PROMPT = `Sen bir Dungeons & Dragons 5e oyununda Dungeon Master'a yardım eden bir yardımcısın.
 
@@ -42,74 +29,6 @@ const TASK_PROMPTS: Record<LlmTask, string> = {
   recap: 'Aşağıdaki seans notlarından, bir sonraki oturumun başında okunacak kısa bir "önceki bölümde" özeti yaz.',
 }
 
-export class LlmError extends Error {}
-
-/**
- * Stream a completion. Calls `onDelta` with incremental text.
- * Resolves with the full text.
- */
-export async function runLlm(
-  settings: LlmSettings,
-  task: LlmTask,
-  context: string,
-  onDelta?: (chunk: string) => void,
-): Promise<string> {
-  if (!settings.enabled || !settings.apiKey) {
-    throw new LlmError('Claude bağlantısı kapalı. Ayarlardan API anahtarı ekle.')
-  }
-
-  const { default: Anthropic } = await import('@anthropic-ai/sdk')
-
-  const client = new Anthropic({
-    apiKey: settings.apiKey,
-    // The key lives only in this browser, entered by the user who owns it.
-    dangerouslyAllowBrowser: true,
-  })
-
-  try {
-    const stream = client.messages.stream({
-      model: MODEL,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      // Flavour text does not need deep reasoning; low effort keeps the table waiting less.
-      output_config: { effort: 'low' },
-      messages: [{ role: 'user', content: `${TASK_PROMPTS[task]}\n\n---\n${context}` }],
-    })
-
-    let full = ''
-    stream.on('text', (delta) => {
-      full += delta
-      onDelta?.(delta)
-    })
-
-    const message = await stream.finalMessage()
-
-    if (message.stop_reason === 'refusal') {
-      throw new LlmError('Model bu isteği yanıtlamadı. İstemi değiştirip tekrar dene.')
-    }
-
-    return full.trim()
-  } catch (err) {
-    if (err instanceof LlmError) throw err
-
-    // Typed SDK errors, most specific first.
-    const anthropic = await import('@anthropic-ai/sdk')
-    if (err instanceof anthropic.default.AuthenticationError) {
-      throw new LlmError('API anahtarı geçersiz.')
-    }
-    if (err instanceof anthropic.default.RateLimitError) {
-      throw new LlmError('Hız sınırına takıldın. Biraz bekleyip tekrar dene.')
-    }
-    if (err instanceof anthropic.default.APIConnectionError) {
-      throw new LlmError('Bağlantı kurulamadı. İnternetini kontrol et.')
-    }
-    if (err instanceof anthropic.default.APIError) {
-      throw new LlmError(`Claude hatası (${err.status}): ${err.message}`)
-    }
-    throw new LlmError(err instanceof Error ? err.message : 'Bilinmeyen hata')
-  }
-}
-
 export const LLM_TASK_LABELS: Record<LlmTask, string> = {
   narrate: 'Betimle',
   'npc-voice': 'NPC replikleri',
@@ -117,3 +36,15 @@ export const LLM_TASK_LABELS: Record<LlmTask, string> = {
   improvise: 'Doğaçla',
   recap: 'Seans özeti',
 }
+
+export async function runLlm(
+  cfg: LlmConfig,
+  task: LlmTask,
+  context: string,
+  opts: RunOptions = {},
+): Promise<string> {
+  return runCompletion(cfg, SYSTEM_PROMPT, `${TASK_PROMPTS[task]}\n\n---\n${context}`, opts)
+}
+
+export { LlmError }
+export type { LlmConfig }

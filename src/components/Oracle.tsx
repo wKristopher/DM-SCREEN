@@ -12,6 +12,7 @@ import * as G from '../lib/ai/generators'
 import type { OracleResult, ExtraTables } from '../lib/ai/generators'
 import { ENVIRONMENTS, type Environment } from '../lib/ai/tables'
 import { runLlm, LLM_TASK_LABELS, LlmError, type LlmTask } from '../lib/ai/llm'
+import { PROVIDERS } from '../lib/ai/providers'
 import { roll } from '../lib/dice'
 import { useStore, useExtraTables, useStandaloneTables } from '../store/useStore'
 import { useUi } from '../store/useUi'
@@ -309,20 +310,28 @@ const GENERATORS: Array<{ key: GeneratorKey; label: string }> = [
 ]
 
 function LlmBox() {
-  const settings = useStore((s) => s.settings)
+  const llm = useStore((s) => s.settings.llm)
   const setTab = useUi((s) => s.setTab)
   const [task, setTask] = useState<LlmTask>('narrate')
   const [context, setContext] = useState('')
   const [out, setOut] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const abort = useRef<AbortController | null>(null)
 
-  if (!settings.llmEnabled || !settings.llmKey) {
+  const def = PROVIDERS[llm.provider]
+  const key = llm.keys[llm.provider] ?? ''
+  const model = llm.models[llm.provider] ?? def.defaultModel
+
+  useEffect(() => () => abort.current?.abort(), [])
+
+  if (!llm.enabled || !key) {
     return (
       <div className="rounded-2xl p-3.5 text-[0.78rem]" style={{ background: 'var(--bg-deep)', color: 'var(--ink-mute)' }}>
         <p className="mb-2">
           Kâhin, yukarıdaki her şeyi <strong style={{ color: 'var(--ink-soft)' }}>internet olmadan</strong> üretir.
-          İstersen bir Claude anahtarı ekleyip serbest metin (betimleme, NPC replikleri, seans özeti) de aldırabilirsin.
+          İstersen Claude, ChatGPT veya Gemini anahtarı ekleyip serbest metin (betimleme, NPC replikleri, seans özeti)
+          de aldırabilirsin.
         </p>
         <button className="btn btn-xs" onClick={() => setTab('campaign')}>
           Ayarlara git
@@ -332,13 +341,27 @@ function LlmBox() {
   }
 
   const run = async () => {
+    abort.current?.abort()
+    const controller = new AbortController()
+    abort.current = controller
+
     setBusy(true)
     setErr(null)
     setOut('')
     try {
-      await runLlm({ apiKey: settings.llmKey, enabled: true }, task, context, (d) => setOut((p) => p + d))
+      await runLlm(
+        {
+          provider: llm.provider,
+          apiKey: key,
+          model,
+          baseUrl: def.configurableBaseUrl ? llm.baseUrl : undefined,
+        },
+        task,
+        context,
+        { signal: controller.signal, onDelta: (d) => setOut((p) => p + d) },
+      )
     } catch (e) {
-      setErr(e instanceof LlmError ? e.message : 'Beklenmeyen hata')
+      if (!controller.signal.aborted) setErr(e instanceof LlmError ? e.message : 'Beklenmeyen hata')
     } finally {
       setBusy(false)
     }
@@ -354,9 +377,15 @@ function LlmBox() {
             </option>
           ))}
         </select>
-        <button className="btn btn-accent btn-xs" disabled={busy || !context.trim()} onClick={run}>
-          {busy ? 'Yazıyor…' : 'Üret'}
-        </button>
+        {busy ? (
+          <button className="btn btn-xs" onClick={() => abort.current?.abort()}>
+            Durdur
+          </button>
+        ) : (
+          <button className="btn btn-accent btn-xs" disabled={!context.trim()} onClick={run}>
+            Üret
+          </button>
+        )}
       </div>
       <textarea
         className="field text-[0.8rem] resize-y"
@@ -375,6 +404,9 @@ function LlmBox() {
           {out}
         </p>
       )}
+      <p className="text-[0.64rem]" style={{ color: 'var(--ink-mute)' }}>
+        {def.label} · {model}
+      </p>
     </div>
   )
 }
