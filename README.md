@@ -52,6 +52,7 @@ Diğer komutlar:
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
 npm run test       # 179 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik
 npm run check      # typecheck + test + build
+npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
 
 ---
@@ -124,11 +125,19 @@ değişmez. `AUTH_SECRET`'i değiştirmek açık tüm oturumları anında düş�
 Test etmek için:
 
 ```bash
-npm run test:gate   # gerçek middleware + giriş uç noktası, gerçek tarayıcı
+npm run test:gate     # gerçek middleware + giriş uç noktası, gerçek tarayıcı
+npm run test:deploy   # Vercel'in derleyicisi: middleware + iki uç nokta gerçekten kuruluyor mu
 ```
 
 Testler gerçek şifreyi bilmez: `test/gate-account.mjs` her koşuda kendi tek
 kullanımlık hesabını üretir.
+
+> **TypeScript 5.x'te sabitli — yükseltme.** `middleware.ts` ve `api/*.ts`
+> dosyalarını derleyen Vercel değil, projenin kendi TypeScript'i. TypeScript 7
+> (yerel koda yeniden yazılmış sürüm) eski derleyici API'sini sunmadığı için
+> derleme `Cannot read properties of undefined (reading 'readFile')` ile
+> düşüyor — üstelik `npm run check` bunu göremiyor, çünkü `vite build` yalnızca
+> istemciyi derler. `npm run test:deploy` tam da bu boşluğu kapatmak için var.
 
 ---
 
