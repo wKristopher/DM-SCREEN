@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs test/sources.test.mjs test/providers.test.mjs",
+    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs test/sources.test.mjs test/providers.test.mjs test/auth.test.mjs",
+    "test:gate": "npm run build && node test/bundle-server.mjs && (node server.built.mjs & sleep 3 && BASE=http://localhost:4180 node test/gate.test.mjs; kill %1)",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "repository": {
@@ -24,12 +25,14 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@vercel/edge": "^1.3.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",

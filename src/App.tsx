@@ -131,6 +131,12 @@ export default function App() {
           >
             {theme === 'dusk' ? <Icons.sun /> : <Icons.moon />}
           </button>
+
+          {/* A plain link, not a fetch: the endpoint clears the cookie and
+              redirects, so the browser lands on the login page by itself. */}
+          <a className="btn btn-icon shrink-0" href="/api/logout" title="Çıkış yap">
+            <Icons.logout />
+          </a>
         </div>
 
         <nav className="flex gap-1 overflow-x-auto pb-0.5">

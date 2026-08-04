@@ -4,3 +4,10 @@ dist/
 .DS_Store
 .vite/
 *.log
+
+# Credentials belong in the environment, never in the repo.
+.env
+.env.*
+
+.vercel/
+server.built.mjs

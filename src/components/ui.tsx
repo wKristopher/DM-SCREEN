@@ -76,6 +76,9 @@ export const Icons = {
   hammer: (p: IconProps) => (
     <svg {...s(p)}><path d="m15 12-8.4 8.4a2.1 2.1 0 0 1-3-3L12 9" /><path d="m18 15 4-4-6.5-6.5-2 2L11 4l-3 3 2.5 2.5-2 2z" /></svg>
   ),
+  logout: (p: IconProps) => (
+    <svg {...s(p)}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></svg>
+  ),
   skull: (p: IconProps) => (
     <svg {...s(p)}><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><path d="M8 20v-2.2a1 1 0 0 0-.6-.9A7 7 0 0 1 12 3a7 7 0 0 1 4.6 13.9 1 1 0 0 0-.6.9V20a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1z" /><path d="M11 17h2" /></svg>
   ),

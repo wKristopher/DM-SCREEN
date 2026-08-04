@@ -50,12 +50,85 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 145 test: zar, niyet yönlendirici, şema, sağlayıcılar
+npm run test       # 179 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik
 npm run check      # typecheck + test + build
 ```
 
-Tamamen statik bir site: `dist/` klasörünü Vercel, Netlify, GitHub Pages ya da
-kendi sunucuna koyabilirsin. Backend gerekmez.
+---
+
+## Yayına alma ve giriş koruması
+
+Site herkese açık olmasın diye giriş **kenar (edge) tarafında** zorlanır. Bunun
+tarayıcıda çizilen bir giriş ekranından farkı şu: geçerli oturum çerezi yoksa
+ziyaretçi HTML kabuğunu, JS paketini, CSS'i — **hiçbirini** indiremez. Sadece
+giriş sayfasını görür.
+
+```
+middleware.ts        her isteği karşılar, imzalı çerezi doğrular
+api/login.ts         kullanıcı adı + şifreyi sunucuda kontrol eder, çerezi verir
+api/logout.ts        çerezi siler
+lib/auth.ts          PBKDF2 doğrulama + HMAC imzalı oturum (yalnızca sunucuda)
+public/login.html    paketten bağımsız, tek başına duran giriş sayfası
+```
+
+Depoda hiçbir kimlik bilgisi yok — ne şifre, ne hash, ne de bir örnek dosya.
+Hepsi ortam değişkeninden okunur. Değişkenler tanımlı değilse site **kilitli
+kalır** (her giriş reddedilir, `/api/login` 503 döner); yanlışlıkla herkese açık
+bir dağıtım oluşmaz.
+
+Şifre PBKDF2-SHA256 (210.000 tur, rastgele salt) ile saklanır; hiçbir zaman
+istemci paketine girmez. Oturum çerezi `HttpOnly` + `Secure` + `SameSite=Lax`,
+12 saat geçerli. Yanlış kullanıcı adı ile yanlış şifre **aynı** mesajı döner
+(hesap sızdırmamak için) ve doğrulama sabit zamanlı karşılaştırma kullanır.
+
+### Vercel'e alma
+
+**1. Hesabı üret.** Şifreyi hiçbir yere yazmadan, yalnızca hash'ini çıkar:
+
+```bash
+node -e "const c=require('crypto');const salt=c.randomBytes(16).toString('hex');
+console.log('ADMIN_SALT  =',salt);
+console.log('ADMIN_HASH  =',c.pbkdf2Sync(process.argv[1],salt,210000,32,'sha256').toString('hex'));
+console.log('AUTH_SECRET =',c.randomBytes(32).toString('hex'))" 'ŞİFREN'
+```
+
+**2. Projeyi kur.** İkisinden biri:
+
+```bash
+npx vercel --prod                 # bu klasörden doğrudan
+```
+
+ya da [vercel.com/new](https://vercel.com/new) → depoyu seç → **Import**
+(framework otomatik algılanır: Vite, çıktı `dist/`).
+
+**3. Dört değişkeni gir** (Vercel → Project → Settings → Environment Variables,
+Production + Preview) ve yeniden dağıt:
+
+| Değişken | Ne |
+|---|---|
+| `ADMIN_USER` | kullanıcı adı |
+| `ADMIN_SALT` | rastgele salt (hex) |
+| `ADMIN_HASH` | PBKDF2-SHA256, 210k tur, 32 bayt (hex) |
+| `AUTH_SECRET` | oturum imzalama anahtarı (32 rastgele bayt, hex) |
+
+Şifreyi değiştirmek = `ADMIN_SALT` + `ADMIN_HASH` değerlerini yenilemek; kod
+değişmez. `AUTH_SECRET`'i değiştirmek açık tüm oturumları anında düşürür.
+
+> **Şifre uzunluğu hakkında:** kısa ve yalnızca rakamlardan oluşan şifrelerin
+> olasılık uzayı küçüktür — deneme yanılma ile bulunabilirler. `api/login.ts` IP
+> başına 10 dakikada 10 denemeyle sınırlar ve PBKDF2 her denemeyi ~200ms'e
+> çıkarır, ama kararlı bir saldırgan için bu yavaşlatmadır, duvar değil. Uzun
+> bir parola çok daha iyi korur ve yukarıdaki komutla dakikalar içinde
+> değiştirilir.
+
+Test etmek için:
+
+```bash
+npm run test:gate   # gerçek middleware + giriş uç noktası, gerçek tarayıcı
+```
+
+Testler gerçek şifreyi bilmez: `test/gate-account.mjs` her koşuda kendi tek
+kullanımlık hesabını üretir.
 
 ---
 
