@@ -655,7 +655,7 @@ export function Forge() {
       <Modal open={showImport} onClose={() => setShowImport(false)} title="URL’den içe aktar">
         <p className="text-[0.8rem] mb-3" style={{ color: 'var(--ink-soft)' }}>
           Bir arkadaşının paylaştığı derlemenin doğrudan JSON adresini yapıştır (GitHub raw, gist, kendi sunucun).
-          Kaynağın CORS’a izin vermesi gerekir.
+          Kendi formatımız da 5etools homebrew dosyaları da kabul edilir. Kaynağın CORS’a izin vermesi gerekir.
         </p>
         <input
           className="field mb-3"

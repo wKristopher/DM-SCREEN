@@ -1,6 +1,7 @@
 /** Full monster statblock, laid out the way the printed page does it. */
 
 import type { Monster, Spell, MagicItem, NamedEntry } from '../lib/open5e'
+import type { RuleEntry } from '../lib/fivetools-convert'
 import { formatCr, speedToString, xpForCr, profBonusForCr } from '../lib/open5e'
 import { abilityMod, signed, roll } from '../lib/dice'
 import { useStore } from '../store/useStore'
@@ -36,6 +37,11 @@ function Line({ label, value }: { label: string; value?: string | null }) {
   )
 }
 
+/**
+ * Bodies go through `RichText` because the 5etools catalogue preserves the
+ * printed emphasis — "_Melee Weapon Attack:_", "**Hit:**". Records from the
+ * network sources carry no markup and pass through unchanged.
+ */
 function Section({ title, entries }: { title?: string; entries?: NamedEntry[] | null }) {
   const logRoll = useStore((s) => s.logRoll)
   if (!entries?.length) return null
@@ -57,7 +63,9 @@ function Section({ title, entries }: { title?: string; entries?: NamedEntry[] | 
           <span className="font-semibold italic" style={{ color: 'var(--ink)' }}>
             {e.name}.
           </span>{' '}
-          <span style={{ color: 'var(--ink-soft)' }}>{e.desc}</span>
+          <span style={{ color: 'var(--ink-soft)' }}>
+            <RichText text={e.desc} />
+          </span>
           {e.damage_dice && (
             <button
               className="btn btn-xs ml-1.5 align-middle"
@@ -194,7 +202,7 @@ export function StatBlock({ m, onAdd }: { m: Monster; onAdd?: () => void }) {
           </h4>
           {m.legendary_desc && (
             <p className="text-[0.78rem] italic" style={{ color: 'var(--ink-mute)' }}>
-              {m.legendary_desc}
+              <RichText text={m.legendary_desc} />
             </p>
           )}
           <Section entries={m.legendary_actions} />
@@ -297,6 +305,40 @@ export function ItemCard({ it }: { it: MagicItem }) {
       </header>
       <div className="text-[0.8rem] leading-relaxed prose-sb" style={{ color: 'var(--ink-soft)' }}>
         <RichText text={it.desc} />
+      </div>
+    </article>
+  )
+}
+
+/* ------------------------------------------------------------------ rules */
+
+const RULE_KIND_LABEL: Record<string, string> = {
+  condition: 'durum',
+  disease: 'hastalık',
+  status: 'statü',
+  action: 'aksiyon',
+  variantrule: 'varyant kural',
+  sense: 'duyu',
+  skill: 'beceri',
+}
+
+/** Conditions, diseases, actions, senses, variant rules — name plus prose. */
+export function RuleCard({ r }: { r: RuleEntry }) {
+  return (
+    <article className="space-y-2 animate-fade">
+      <header>
+        <div className="flex items-start gap-2">
+          <h3 className="panel-title text-lg font-bold leading-tight flex-1">{r.name}</h3>
+          {r.homebrew ? (
+            <span className="chip chip-violet">homebrew</span>
+          ) : (
+            <span className="chip chip-mute">{r.document__title}</span>
+          )}
+        </div>
+        <span className="chip chip-sage mt-1 inline-block">{RULE_KIND_LABEL[r.kind] ?? r.kind}</span>
+      </header>
+      <div className="text-[0.8rem] leading-relaxed prose-sb" style={{ color: 'var(--ink-soft)' }}>
+        <RichText text={r.desc} />
       </div>
     </article>
   )

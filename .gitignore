@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .vite/
 *.log
+
+# Generated from your own 5etools checkout by scripts/export-5etools.mjs.
+# Derived data — regenerate it, do not commit or redistribute it.
+public/5etools/

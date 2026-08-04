@@ -10,16 +10,23 @@
  *      opened at boot (see `warmUp` and the preconnect hints in index.html)
  *      and kept alive; almost every real query runs warm.
  *
- *   2. The two upstreams have very different shapes. dnd5eapi serves SRD only
+ *   2. The upstreams have very different shapes. dnd5eapi serves SRD only
  *      but answers in ~65ms warm; Open5e carries 10× the catalogue at ~500ms.
  *      Racing them and rendering progressively means results appear at ~65ms
  *      and the long tail fills in behind — instead of waiting 500ms for
  *      everything.
+ *
+ *   3. A generated 5etools catalogue, when the DM has one, is local: it answers
+ *      from an in-memory index in well under a millisecond and carries far more
+ *      than either network source. It joins the same race rather than replacing
+ *      it, so a screen with no catalogue behaves exactly as before.
  */
 
 import type { Monster, Spell, MagicItem, SourceId } from './open5e'
 import { searchMonsters, searchSpells, searchMagicItems, DND5EAPI_PRECONNECT } from './open5e'
 import * as srd from './dnd5eapi'
+import * as five from './fivetools'
+import type { RuleEntry } from './fivetools-convert'
 
 export interface SourceTiming {
   source: SourceId
@@ -127,12 +134,61 @@ async function race<T extends { name: string; document__slug: string }>(
 
 /* ------------------------------------------------------------------ monsters */
 
-export interface LiveMonsterQuery {
-  search: string
-  cr?: string
+/** Options every kind of live search understands. */
+export interface LiveScope {
   documents?: string[]
   /** Race the fast SRD mirror alongside the full catalogue. */
   fast?: boolean
+  /** Query the generated local 5etools catalogue. */
+  local?: boolean
+  /** Skip the network sources entirely — 5etools only. */
+  localOnly?: boolean
+}
+
+/**
+ * Split the DM's book filter by which side can answer it — a 5etools document
+ * slug never matches an Open5e book, and vice versa.
+ *
+ * `null` means "no filter, search everything". An empty array means "there is
+ * a filter and it excludes this side entirely", which is a different answer
+ * and must not collapse back into "search everything".
+ */
+function docsFor(documents: string[] | undefined, side: 'local' | 'network'): string[] | null {
+  if (!documents?.length) return null
+  return documents.filter((d) => (d.startsWith('5et-') ? side === 'local' : side === 'network'))
+}
+
+/** A side is worth querying unless the filter has ruled out all of its books. */
+function inScope(docs: string[] | null): boolean {
+  return docs === null || docs.length > 0
+}
+
+export interface Side {
+  /** Whether to query this side at all. */
+  on: boolean
+  /** Books to restrict to; undefined means all of them. */
+  documents?: string[]
+}
+
+/**
+ * Decide, once, which sides a search should hit and with what book filter.
+ *
+ * Skipping a side the filter has excluded is not just tidiness: a network
+ * request that cannot match anything still costs the DM half a second of
+ * "bekleniyor…" mid-turn.
+ */
+export function splitScope(q: LiveScope): { local: Side; network: Side } {
+  const localDocs = docsFor(q.documents, 'local')
+  const netDocs = docsFor(q.documents, 'network')
+  return {
+    local: { on: (q.local ?? true) && inScope(localDocs), documents: localDocs ?? undefined },
+    network: { on: !q.localOnly && inScope(netDocs), documents: netDocs ?? undefined },
+  }
+}
+
+export interface LiveMonsterQuery extends LiveScope {
+  search: string
+  cr?: string
 }
 
 export function liveSearchMonsters(
@@ -141,19 +197,30 @@ export function liveSearchMonsters(
   onSnapshot: OnSnapshot<Monster>,
   signal: AbortSignal,
 ): Promise<void> {
-  const tasks: Array<RaceTask<Monster>> = [
-    {
-      source: 'open5e',
-      run: (s) =>
-        searchMonsters({ search: q.search, cr: q.cr, documents: q.documents, limit: 40 }, { signal: s }).then(
-          (r) => r.results,
-        ),
-    },
-  ]
+  const tasks: Array<RaceTask<Monster>> = []
+  const { local, network } = splitScope(q)
+
+  if (local.on) {
+    tasks.push({
+      source: '5etools',
+      run: () => five.searchMonsters({ search: q.search, cr: q.cr, documents: local.documents }),
+    })
+  }
+
+  if (!network.on) return race(tasks, q.search, seed, onSnapshot, signal)
+
+  tasks.push({
+    source: 'open5e',
+    run: (s) =>
+      searchMonsters(
+        { search: q.search, cr: q.cr, documents: network.documents, limit: 40 },
+        { signal: s },
+      ).then((r) => r.results),
+  })
 
   // The fast source only carries SRD, so skip it when the DM has filtered to
   // books it does not have — otherwise it would contribute nothing but latency.
-  const srdInScope = (q.fast ?? true) && (!q.documents?.length || q.documents.includes('wotc-srd'))
+  const srdInScope = (q.fast ?? true) && (!network.documents || network.documents.includes('wotc-srd'))
   if (srdInScope) {
     tasks.push({
       source: 'dnd5eapi',
@@ -176,11 +243,9 @@ export function liveSearchMonsters(
 
 /* ------------------------------------------------------------------ spells */
 
-export interface LiveSpellQuery {
+export interface LiveSpellQuery extends LiveScope {
   search: string
   level?: number
-  documents?: string[]
-  fast?: boolean
 }
 
 export function liveSearchSpells(
@@ -189,17 +254,28 @@ export function liveSearchSpells(
   onSnapshot: OnSnapshot<Spell>,
   signal: AbortSignal,
 ): Promise<void> {
-  const tasks: Array<RaceTask<Spell>> = [
-    {
-      source: 'open5e',
-      run: (s) =>
-        searchSpells({ search: q.search, level: q.level, documents: q.documents, limit: 40 }, { signal: s }).then(
-          (r) => r.results,
-        ),
-    },
-  ]
+  const tasks: Array<RaceTask<Spell>> = []
+  const { local, network } = splitScope(q)
 
-  const srdInScope = (q.fast ?? true) && (!q.documents?.length || q.documents.includes('wotc-srd'))
+  if (local.on) {
+    tasks.push({
+      source: '5etools',
+      run: () => five.searchSpells({ search: q.search, level: q.level, documents: local.documents }),
+    })
+  }
+
+  if (!network.on) return race(tasks, q.search, seed, onSnapshot, signal)
+
+  tasks.push({
+    source: 'open5e',
+    run: (s) =>
+      searchSpells(
+        { search: q.search, level: q.level, documents: network.documents, limit: 40 },
+        { signal: s },
+      ).then((r) => r.results),
+  })
+
+  const srdInScope = (q.fast ?? true) && (!network.documents || network.documents.includes('wotc-srd'))
   if (srdInScope) {
     tasks.push({
       source: 'dnd5eapi',
@@ -221,24 +297,60 @@ export function liveSearchSpells(
 /* ------------------------------------------------------------------ items */
 
 export function liveSearchItems(
-  q: { search: string; documents?: string[] },
+  q: LiveScope & { search: string },
   seed: MagicItem[],
   onSnapshot: OnSnapshot<MagicItem>,
   signal: AbortSignal,
 ): Promise<void> {
-  return race(
-    [
-      {
-        source: 'open5e',
-        run: (s) =>
-          searchMagicItems({ search: q.search, documents: q.documents, limit: 40 }, { signal: s }).then((r) => r.results),
-      },
-    ],
-    q.search,
-    seed,
-    onSnapshot,
-    signal,
-  )
+  const tasks: Array<RaceTask<MagicItem>> = []
+  const { local, network } = splitScope(q)
+
+  if (local.on) {
+    tasks.push({
+      source: '5etools',
+      run: () => five.searchItems({ search: q.search, documents: local.documents }),
+    })
+  }
+
+  if (network.on) {
+    tasks.push({
+      source: 'open5e',
+      run: (s) =>
+        searchMagicItems({ search: q.search, documents: network.documents, limit: 40 }, { signal: s }).then(
+          (r) => r.results,
+        ),
+    })
+  }
+
+  return race(tasks, q.search, seed, onSnapshot, signal)
+}
+
+/* ------------------------------------------------------------------ rules */
+
+/**
+ * Conditions, diseases, actions, senses and variant rules.
+ *
+ * Only the local catalogue carries these — Open5e's `sections` endpoint is
+ * prose chapters rather than lookup-sized entries, which is the wrong shape
+ * for "what does Grappled do again?" mid-turn.
+ */
+export function liveSearchRules(
+  q: LiveScope & { search: string; kind?: string },
+  seed: RuleEntry[],
+  onSnapshot: OnSnapshot<RuleEntry>,
+  signal: AbortSignal,
+): Promise<void> {
+  const { local } = splitScope(q)
+  const tasks: Array<RaceTask<RuleEntry>> = local.on
+    ? [
+        {
+          source: '5etools',
+          run: () => five.searchRules({ search: q.search, kind: q.kind, documents: local.documents }),
+        },
+      ]
+    : []
+
+  return race(tasks, q.search, seed, onSnapshot, signal)
 }
 
 /* ------------------------------------------------------------------ warm-up */
@@ -255,6 +367,10 @@ let warmed = false
 export function warmUp(): void {
   if (warmed || typeof fetch === 'undefined') return
   warmed = true
+
+  // Pull the local search indexes in parallel; they are what make the local
+  // catalogue answer instantly, and they cost nothing to read early.
+  five.warmUp()
 
   const ping = (url: string) =>
     fetch(url, { headers: { Accept: 'application/json' }, mode: 'cors' }).catch(() => undefined)

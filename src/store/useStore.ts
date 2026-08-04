@@ -82,10 +82,20 @@ export interface LlmSettings {
   baseUrl: string
 }
 
+/** The locally generated 5etools catalogue, if the DM has run the export. */
+export interface FiveToolsSettings {
+  enabled: boolean
+  /** Search only the local catalogue — no network sources at all. */
+  only: boolean
+  /** Where the generated files live; empty means "next to the app". */
+  baseUrl: string
+}
+
 export interface Settings {
   theme: ThemeName
-  /** Open5e document slugs to include in searches; empty means all. */
+  /** Document slugs to include in searches; empty means all. */
   sources: string[]
+  fiveTools: FiveToolsSettings
   llm: LlmSettings
   autoRollInitiative: boolean
   showHpBars: boolean
@@ -172,6 +182,7 @@ function uniqueName(existing: Combatant[], base: string): string {
 const DEFAULT_SETTINGS: Settings = {
   theme: 'dusk',
   sources: [],
+  fiveTools: { enabled: true, only: false, baseUrl: '' },
   llm: {
     enabled: false,
     provider: 'anthropic',
@@ -499,10 +510,12 @@ export const useStore = create<State>()(
           llm.enabled = saved.llmEnabled ?? false
         }
 
+        const fiveTools = { ...DEFAULT_SETTINGS.fiveTools, ...(saved.fiveTools ?? {}) }
+
         return {
           ...current,
           ...p,
-          settings: { ...DEFAULT_SETTINGS, ...saved, llm },
+          settings: { ...DEFAULT_SETTINGS, ...saved, llm, fiveTools },
         }
       },
     },
