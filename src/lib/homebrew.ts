@@ -10,6 +10,7 @@
  */
 
 import type { Monster, Spell, MagicItem, NamedEntry } from './open5e'
+import { convertBrew } from './fivetools-convert'
 
 export const BREW_FORMAT = 'kahin-brew/1'
 
@@ -203,9 +204,48 @@ export interface ImportReport {
 }
 
 /**
+ * 5etools brew documents key their content by singular entity name
+ * (`monster`, `spell`) and describe themselves in `_meta.sources`, which is
+ * enough to tell them apart from our own packs without asking the DM which
+ * kind of file they just dropped.
+ */
+function isFiveToolsBrew(obj: Record<string, unknown>): boolean {
+  if (obj.format === BREW_FORMAT) return false
+  if (obj._meta && typeof obj._meta === 'object') return true
+  return ['monster', 'spell', 'item', 'baseitem', 'condition', 'disease', 'action', 'variantrule'].some((k) =>
+    Array.isArray(obj[k]),
+  )
+}
+
+function parseFiveToolsPack(obj: Record<string, unknown>, fallbackName: string): ImportReport {
+  const converted = convertBrew(obj)
+  const pack = emptyPack(converted.name || fallbackName)
+  pack.author = converted.author
+  pack.description = '5etools homebrew dosyasından içe aktarıldı.'
+  pack.monsters = converted.monsters
+  pack.spells = converted.spells
+  pack.items = converted.items
+
+  const warnings = [...converted.warnings]
+  if (converted.rules.length) {
+    // A pack has nowhere to put conditions and variant rules. The export
+    // script does carry them, so point at the path that works.
+    warnings.push(
+      `${converted.rules.length} kural girdisi (durum, aksiyon, varyant kural) atlandı — ` +
+        'bunlar için dosyayı 5etools kaynağının homebrew/ klasörüne koyup dışa aktarımı yenile.',
+    )
+  }
+  if (!countEntries(pack)) throw new Error('5etools dosyasında içe aktarılabilir içerik bulunamadı.')
+
+  return { pack, warnings }
+}
+
+/**
  * Parse an imported pack. Tolerant by design — a half-filled homebrew file from
  * someone else's tool is still worth salvaging, so unknown fields are dropped
  * and missing ones are defaulted rather than rejecting the whole import.
+ *
+ * Accepts both our own format and 5etools brew documents.
  */
 export function parsePack(raw: unknown, fallbackName = 'İçe aktarılan'): ImportReport {
   const warnings: string[] = []
@@ -214,6 +254,8 @@ export function parsePack(raw: unknown, fallbackName = 'İçe aktarılan'): Impo
     throw new Error('Dosya bir JSON nesnesi değil.')
   }
   const obj = raw as Record<string, unknown>
+
+  if (isFiveToolsBrew(obj)) return parseFiveToolsPack(obj, fallbackName)
 
   if (obj.format !== BREW_FORMAT) {
     warnings.push(`Bilinmeyen format (${String(obj.format ?? 'yok')}). Yine de okumaya çalışıldı.`)

@@ -19,7 +19,28 @@ export const DND5EAPI_PRECONNECT = 'https://www.dnd5eapi.co'
 export type ResourceKind = 'monsters' | 'spells' | 'magicitems' | 'conditions' | 'sections' | 'feats' | 'races' | 'classes' | 'backgrounds' | 'planes' | 'weapons' | 'armor'
 
 /** Which upstream answered. Used for dedupe, latency display and prefetching. */
-export type SourceId = 'open5e' | 'dnd5eapi' | 'homebrew'
+export type SourceId = 'open5e' | 'dnd5eapi' | 'homebrew' | '5etools'
+
+/**
+ * Fields shared by every record the compendium can show.
+ *
+ * `partial` exists because the local 5etools catalogue answers searches from a
+ * compact index and only reads the full record when one is opened — see
+ * `fivetools.ts`. Records from the network sources arrive complete and leave
+ * both fields unset.
+ */
+export interface Provenanced {
+  document__slug: string
+  document__title: string
+  /** Set locally for user-authored content. */
+  homebrew?: boolean
+  /** Which upstream produced this record. */
+  source?: SourceId
+  /** True while this is a search-index summary rather than the full record. */
+  partial?: boolean
+  /** Content shard holding the full record, for hydration. */
+  shard?: number
+}
 
 /** A source book, as Open5e models it. */
 export interface SourceDoc {
@@ -29,7 +50,7 @@ export interface SourceDoc {
   url?: string
 }
 
-export interface Monster {
+export interface Monster extends Provenanced {
   slug: string
   name: string
   size: string
@@ -71,12 +92,6 @@ export interface Monster {
   special_abilities?: NamedEntry[] | null
   desc?: string
   environments?: string[]
-  document__slug: string
-  document__title: string
-  /** Set locally for user-authored creatures. */
-  homebrew?: boolean
-  /** Which upstream produced this record. */
-  source?: SourceId
 }
 
 export interface NamedEntry {
@@ -86,7 +101,7 @@ export interface NamedEntry {
   damage_dice?: string
 }
 
-export interface Spell {
+export interface Spell extends Provenanced {
   slug: string
   name: string
   desc: string
@@ -102,23 +117,15 @@ export interface Spell {
   level_int: number
   school: string
   dnd_class: string
-  document__slug: string
-  document__title: string
-  homebrew?: boolean
-  source?: SourceId
 }
 
-export interface MagicItem {
+export interface MagicItem extends Provenanced {
   slug: string
   name: string
   type: string
   desc: string
   rarity: string
   requires_attunement?: string
-  document__slug: string
-  document__title: string
-  homebrew?: boolean
-  source?: SourceId
 }
 
 export interface Condition {
