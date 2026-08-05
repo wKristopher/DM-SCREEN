@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs test/sources.test.mjs test/providers.test.mjs test/auth.test.mjs test/backup.test.mjs",
+    "test": "node test/runtests.mjs test/dice.test.mjs test/oracle.test.mjs test/sources.test.mjs test/providers.test.mjs test/auth.test.mjs test/backup.test.mjs test/bulk.test.mjs",
     "test:gate": "npm run build && node test/bundle-server.mjs && (node server.built.mjs & sleep 3 && BASE=http://localhost:4180 node test/gate.test.mjs; kill %1)",
     "test:deploy": "node test/vercel-build.mjs",
     "check": "npm run typecheck && npm run test && npm run build"

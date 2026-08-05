@@ -70,7 +70,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 229 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik, yedek
+npm run test       # 270 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, toplu içe aktarma
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
@@ -221,6 +221,28 @@ Ocak sekmesi tam bir içerik editörüdür:
 
 Derlemeler `.brew.json` olarak dışa aktarılır ve dosyadan ya da URL'den içe
 aktarılır — arkadaşınla paylaşman için.
+
+### Klasörden toplu içe aktarma
+
+Homebrew tek dosya hâlinde birikmez: kampanya başına bir klasör, yaratık başına
+bir dosya olur. Ocak → **Klasör** bir dizinin tamamını tek seferde alır (alt
+klasörler dahil). İki kural:
+
+- **Dosyanın ne olduğu içeriğinden anlaşılır.** Çoğu dosya Kâhin derlemesi
+  değildir — çıplak bir yaratık, ya da başka bir araçtan çıkmış bir büyü
+  dizisidir. Yalnızca tek bir türde bulunan alanlara bakılır
+  (`challenge_rating` → yaratık, `casting_time` → büyü); `level` gibi paylaşılan
+  alanlar tek başına karar vermez.
+- **Klasör birimdir.** Yirmi yaratık dosyasının yirmi ayrı derleme olması,
+  klasörün kendisinden daha dağınık olurdu. Serbest dosyalar bulundukları
+  dizinin adını taşıyan tek bir derlemede toplanır; zaten tam bir derleme olan
+  dosya kendi adını ve kimliğini korur.
+
+Hiçbir şey sorulmadan eklenmez: kaç dosya tarandı, hangi derlemeler çıkacak,
+hangi dosyalar neden atlandı — hepsi önce ekranda listelenir. Atlananlar
+sayılmaz, tek tek yazılır; "12 dosya atlandı" kimseye hangi on iki olduğunu
+söylemez. Yanlışlıkla klasöre düşmüş bir yedek dosyası da tanınır ve doğru
+sekmeye yönlendirilir.
 
 ---
 

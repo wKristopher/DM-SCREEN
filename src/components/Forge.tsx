@@ -11,6 +11,7 @@ import {
   parsePack, downloadPack, fetchPack, countEntries, TABLE_HOOKS,
   type BrewPack, type BrewTable, type BrewNpc,
 } from '../lib/homebrew'
+import { importFiles, reportEntries, type BulkReport } from '../lib/bulk'
 import type { Monster, Spell, MagicItem, NamedEntry } from '../lib/open5e'
 import { CREATURE_TYPES } from '../lib/srd'
 import { useStore } from '../store/useStore'
@@ -440,6 +441,9 @@ export function Forge() {
   const [importUrl, setImportUrl] = useState('')
   const [showImport, setShowImport] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const folderRef = useRef<HTMLInputElement>(null)
+  const [bulk, setBulk] = useState<BulkReport | null>(null)
+  const [reading, setReading] = useState(false)
 
   const pack = packs.find((p) => p.id === activePackId) ?? packs[0] ?? null
 
@@ -459,6 +463,31 @@ export function Forge() {
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Dosya okunamadı')
     }
+  }
+
+  /**
+   * Read a whole selection without committing it.
+   *
+   * A folder can hold fifty files; the report is shown first so nobody has to
+   * discover what happened by scrolling through the pack list afterwards.
+   */
+  const readBulk = async (files: File[]) => {
+    if (!files.length) return
+    setReading(true)
+    try {
+      setBulk(await importFiles(files))
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Klasör okunamadı')
+    } finally {
+      setReading(false)
+    }
+  }
+
+  const commitBulk = () => {
+    if (!bulk) return
+    for (const p of bulk.packs) addPack(p)
+    setToast(`${bulk.packs.length} derleme · ${reportEntries(bulk)} kayıt içe aktarıldı`)
+    setBulk(null)
   }
 
   const importFromUrl = async () => {
@@ -499,7 +528,15 @@ export function Forge() {
       actions={
         <>
           <button className="btn btn-xs" onClick={() => fileRef.current?.click()}>
-            <Icons.upload className="w-3 h-3" /> İçe
+            <Icons.upload className="w-3 h-3" /> Dosya
+          </button>
+          <button
+            className="btn btn-xs"
+            disabled={reading}
+            onClick={() => folderRef.current?.click()}
+            title="Bir klasördeki tüm JSON dosyaları"
+          >
+            <Icons.upload className="w-3 h-3" /> {reading ? 'Okunuyor…' : 'Klasör'}
           </button>
           <button className="btn btn-xs" onClick={() => setShowImport(true)}>
             URL
@@ -521,10 +558,27 @@ export function Forge() {
         ref={fileRef}
         type="file"
         accept="application/json,.json"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0]
-          if (f) importFile(f)
+          const list = [...(e.target.files ?? [])]
+          // One file keeps the old single-import message; several go through
+          // the report, same as a folder.
+          if (list.length === 1) void importFile(list[0])
+          else void readBulk(list)
+          e.target.value = ''
+        }}
+      />
+
+      <input
+        ref={folderRef}
+        type="file"
+        className="hidden"
+        // Not in React's typings, but it is what turns the file picker into a
+        // directory picker in every browser that supports one.
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+        onChange={(e) => {
+          void readBulk([...(e.target.files ?? [])])
           e.target.value = ''
         }}
       />
@@ -649,6 +703,80 @@ export function Forge() {
               />
             )}
           </>
+        )}
+      </Modal>
+
+      <Modal open={!!bulk} onClose={() => setBulk(null)} title="Klasörden içe aktar">
+        {bulk && (
+          <div className="space-y-3">
+            <p className="text-[0.82rem]" style={{ color: 'var(--ink-soft)' }}>
+              {bulk.scanned} dosya tarandı → <strong>{bulk.packs.length} derleme</strong>, {reportEntries(bulk)} kayıt.
+            </p>
+
+            {bulk.packs.length > 0 ? (
+              <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
+                {bulk.packs.map((p, i) => (
+                  <div
+                    key={i}
+                    className="flex items-baseline gap-2 px-2.5 py-1.5 rounded-xl text-[0.76rem]"
+                    style={{ background: 'var(--bg-deep)' }}
+                  >
+                    <span className="font-medium truncate" style={{ color: 'var(--ink-soft)' }}>
+                      {p.name}
+                    </span>
+                    <span className="ml-auto shrink-0" style={{ color: 'var(--ink-mute)' }}>
+                      {countEntries(p)} kayıt
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[0.78rem]" style={{ color: 'var(--rose)' }}>
+                Bu klasörde okunabilecek bir şey çıkmadı.
+              </p>
+            )}
+
+            {/* Skips are listed, not counted: "12 dosya atlandı" tells a DM
+                nothing about which twelve or what to fix. */}
+            {bulk.skipped.length > 0 && (
+              <details>
+                <summary className="text-[0.74rem] cursor-pointer" style={{ color: 'var(--ink-mute)' }}>
+                  {bulk.skipped.length} dosya atlandı
+                </summary>
+                <div className="mt-1.5 space-y-0.5 max-h-36 overflow-y-auto pr-1">
+                  {bulk.skipped.map((s, i) => (
+                    <p key={i} className="text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+                      <span style={{ color: 'var(--ink-soft)' }}>{s.path}</span> — {s.reason}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {bulk.warnings.length > 0 && (
+              <details>
+                <summary className="text-[0.74rem] cursor-pointer" style={{ color: 'var(--ink-mute)' }}>
+                  {bulk.warnings.length} uyarı
+                </summary>
+                <div className="mt-1.5 space-y-0.5 max-h-36 overflow-y-auto pr-1">
+                  {bulk.warnings.map((w, i) => (
+                    <p key={i} className="text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+                      {w}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            <div className="flex gap-2">
+              <button className="btn flex-1" onClick={() => setBulk(null)}>
+                Vazgeç
+              </button>
+              <button className="btn btn-accent flex-1" disabled={bulk.packs.length === 0} onClick={commitBulk}>
+                İçe aktar
+              </button>
+            </div>
+          </div>
         )}
       </Modal>
 
