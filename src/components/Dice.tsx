@@ -1,8 +1,8 @@
 /** Dice tray: quick buttons, free expression, and a rolling history. */
 
 import { useState } from 'react'
-import { roll, rollD20 } from '../lib/dice'
-import { useStore } from '../store/useStore'
+import { roll, rollD20, FAVOUR_LEVELS, expectedD20 } from '../lib/dice'
+import { useStore, diceFavourOf } from '../store/useStore'
 import { useUi } from '../store/useUi'
 import { Icons, Panel, Empty, RichText } from './ui'
 
@@ -13,7 +13,12 @@ export function DiceTray() {
   const [mod, setMod] = useState(0)
   const { rolls, pushRoll, clearRolls } = useUi()
   const logRoll = useStore((s) => s.logRoll)
+  const dice = useStore((s) => s.settings.dice)
+  const setSettings = useStore((s) => s.setSettings)
   const [tumbling, setTumbling] = useState(false)
+
+  const rigged = dice.mode === 'favoured'
+  const favour = diceFavourOf(dice)
 
   const fire = (expression: string, label?: string) => {
     const r = roll(expression)
@@ -48,6 +53,51 @@ export function DiceTray() {
       className="lg:h-full"
       bodyClass="p-3 space-y-2.5"
     >
+      {/* Mode first, above the results: a DM should never have to wonder
+          which kind of die just produced the number they are looking at. */}
+      <div className="space-y-1.5">
+        <div className="flex gap-1.5">
+          <button
+            className={`btn btn-xs flex-1 ${rigged ? '' : 'btn-accent'}`}
+            onClick={() => setSettings({ dice: { ...dice, mode: 'fair' } })}
+          >
+            Adil
+          </button>
+          <button
+            className={`btn btn-xs flex-1 ${rigged ? 'btn-accent' : ''}`}
+            onClick={() => setSettings({ dice: { ...dice, mode: 'favoured' } })}
+            title="Zarlar yükseğe meyleder — yalnızca DM görür"
+          >
+            Kayırmalı
+          </button>
+        </div>
+
+        {rigged && (
+          <div
+            className="rounded-xl px-2.5 py-2 space-y-1.5"
+            style={{ background: 'var(--bg-deep)', border: '1px solid var(--accent-soft, var(--line-soft))' }}
+          >
+            <div className="flex gap-1">
+              {FAVOUR_LEVELS.map((l) => (
+                <button
+                  key={l.id}
+                  className={`btn btn-xs flex-1 ${dice.level === l.id ? 'btn-accent' : ''}`}
+                  onClick={() => setSettings({ dice: { ...dice, level: l.id } })}
+                  title={l.hint}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[0.64rem] leading-snug" style={{ color: 'var(--ink-mute)' }}>
+              d20 ortalaması <strong style={{ color: 'var(--accent)' }}>{expectedD20(favour)}</strong> (adil: 10.5).
+              Her zar %{Math.round(favour * 100)} olasılıkla iki kez atılıp iyisi alınır. Uygulamadaki
+              tüm atışlar için geçerli.
+            </p>
+          </div>
+        )}
+      </div>
+
       {latest && (
         <div
           className="rounded-2xl px-4 py-3 text-center animate-fade"
@@ -69,6 +119,11 @@ export function DiceTray() {
           </p>
           {latest.crit === true && <p className="chip chip-sage mt-1.5">Kritik!</p>}
           {latest.crit === false && <p className="chip chip-rose mt-1.5">Nat 1</p>}
+          {latest.favoured && (
+            <p className="text-[0.62rem] mt-1.5" style={{ color: 'var(--ink-mute)' }}>
+              kayırmalı
+            </p>
+          )}
         </div>
       )}
 
@@ -145,6 +200,13 @@ export function DiceTray() {
               <span className="truncate" style={{ color: 'var(--ink-mute)' }}>
                 <RichText text={r.breakdown} />
               </span>
+              {/* Marked so a scroll back through the log never leaves the DM
+                  guessing which numbers were helped. */}
+              {r.favoured && (
+                <span className="ml-auto shrink-0 text-[0.62rem]" style={{ color: 'var(--ink-mute)' }} title="kayırmalı">
+                  ◆
+                </span>
+              )}
             </div>
           ))}
         </div>

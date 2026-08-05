@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useStore } from './store/useStore'
+import { useStore, useDiceFavourSync } from './store/useStore'
 import { useUi, type TabKey } from './store/useUi'
 import { CommandBar, OraclePanel } from './components/Oracle'
 import { CombatTracker } from './components/CombatTracker'
@@ -81,6 +81,9 @@ export default function App() {
   const lookup = useUi((s) => s.lookup)
   const theme = useStore((s) => s.settings.theme)
   const setSettings = useStore((s) => s.setSettings)
+
+  // One place, so every roll site in the app inherits the dice mode.
+  useDiceFavourSync()
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme

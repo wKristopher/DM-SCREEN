@@ -37,6 +37,26 @@ Tuzak var mı?     → evet/hayır kâhini
 
 `Alt+1…6` sekmeler arasında gezer.
 
+### Zar: iki mod
+
+Zar panelinin başında iki mod var — hangisinin açık olduğu her zaman görünür.
+
+| Mod | Ne yapar | d20 ortalaması |
+|---|---|---|
+| **Adil** | dürüst zar, düz dağılım | 10.5 |
+| **Kayırmalı · Hafif** | zarların %35'i iki kez atılıp iyisi alınır | 11.66 |
+| **Kayırmalı · Orta** | %70 | 12.83 |
+| **Kayırmalı · Güçlü** | %100 — yani her zarda avantaj | 13.83 |
+
+Kayırma tek bir zarın *kendisine* uygulanır, sonuca değil: `4d6kh3`, `2d20kl1`,
+`8d6!` gibi ifadeler bozulmadan çalışmaya devam eder, sadece her zar yükseğe
+meyleder. Olasılık olarak ifade edilmesinin sebebi ayarlanabilir olması —
+"iki at, iyisini seç" d20'de +0'dan doğrudan +3.3'e sıçrar, arası yoktur.
+
+Mod uygulamadaki **bütün** atışlar için geçerlidir (stat block saldırıları,
+inisiyatif, komut çubuğu dahil) ve kayırmalı atışlar geçmişte `◆` ile
+işaretlenir — DM'in hangi sayının yardım gördüğünü sonradan da görebilmesi için.
+
 ---
 
 ## Kurulum
@@ -50,7 +70,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 179 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik
+npm run test       # 196 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```

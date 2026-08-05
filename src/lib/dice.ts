@@ -34,6 +34,8 @@ export interface RollResult {
   breakdown: string
   /** True when a lone d20 came up 20, false when it came up 1, otherwise null. */
   crit: boolean | null
+  /** The roll leaned high. Recorded so the DM can always tell which ones did. */
+  favoured?: boolean
   error?: string
 }
 
@@ -41,7 +43,7 @@ const MAX_DICE = 500
 const MAX_FACES = 1000
 const MAX_EXPLOSIONS = 100
 
-function rollDie(faces: number): number {
+function drawDie(faces: number): number {
   // crypto for dice feels right, and avoids Math.random's clumping on long sessions
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     const buf = new Uint32Array(1)
@@ -55,6 +57,82 @@ function rollDie(faces: number): number {
     return (x % faces) + 1
   }
   return Math.floor(Math.random() * faces) + 1
+}
+
+/** A uniform [0, 1) from the same source as the dice. */
+function drawFloat(): number {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const buf = new Uint32Array(1)
+    crypto.getRandomValues(buf)
+    return buf[0] / 0x100000000
+  }
+  return Math.random()
+}
+
+/**
+ * How hard the roller leans high. 0 is an honest die.
+ *
+ * Above 0 it is the probability that a die is drawn twice and the better draw
+ * kept — so 1 is permanent advantage on every single die, and the values in
+ * between shade smoothly toward it. Expressing it as a probability rather than
+ * "roll N take highest" is what makes it tunable: whole-number best-of-N jumps
+ * from +0 to +3.3 on a d20 with nothing usable in between.
+ */
+export type Favour = number
+
+/**
+ * Set once from settings and read by every roll that does not override it.
+ *
+ * Ambient rather than threaded through every call site because the setting is
+ * global by nature — a DM who turns fudging on means it for the attack they
+ * click in a stat block as much as for the dice tray. The engine is fully
+ * synchronous, so there is no window in which one roll can see another's value.
+ */
+let ambientFavour: Favour = 0
+
+export function setAmbientFavour(f: Favour): void {
+  ambientFavour = clampFavour(f)
+}
+
+function clampFavour(f: number): Favour {
+  return Number.isFinite(f) ? Math.min(1, Math.max(0, f)) : 0
+}
+
+/** Favour in force for the roll currently being evaluated. */
+let activeFavour: Favour = 0
+
+function rollDie(faces: number): number {
+  const first = drawDie(faces)
+  if (activeFavour <= 0) return first
+  // A d1 has nothing better to offer; skip the second draw rather than
+  // burning entropy on a foregone conclusion.
+  if (faces < 2) return first
+  if (activeFavour >= 1 || drawFloat() < activeFavour) return Math.max(first, drawDie(faces))
+  return first
+}
+
+export interface FavourLevel {
+  id: 'light' | 'medium' | 'strong'
+  label: string
+  favour: Favour
+  hint: string
+}
+
+/**
+ * The presets offered in the UI.
+ *
+ * "Güçlü" is exactly advantage on every die — past that the numbers stop
+ * looking like dice, and a table notices a DM who never rolls badly.
+ */
+export const FAVOUR_LEVELS: FavourLevel[] = [
+  { id: 'light', label: 'Hafif', favour: 0.35, hint: 'zar zor fark edilir' },
+  { id: 'medium', label: 'Orta', favour: 0.7, hint: 'gözle görülür ama inandırıcı' },
+  { id: 'strong', label: 'Güçlü', favour: 1, hint: 'her zarda avantaj' },
+]
+
+/** Mean of a d20 at a given favour — 10.5 fair, 13.825 at full advantage. */
+export function expectedD20(favour: Favour): number {
+  return Math.round((10.5 + clampFavour(favour) * 3.325) * 100) / 100
 }
 
 interface Token {
@@ -276,12 +354,20 @@ function describe(dice: DieRoll[], expression: string): string {
   return parts.join('  ·  ')
 }
 
+export interface RollOptions {
+  /** Overrides the ambient setting. 0 forces an honest roll. */
+  favour?: Favour
+}
+
 /** Evaluate a dice expression. Never throws — errors land in `result.error`. */
-export function roll(expression: string): RollResult {
+export function roll(expression: string, opts: RollOptions = {}): RollResult {
   const trimmed = expression.trim()
   if (!trimmed) {
     return { expression, total: 0, dice: [], breakdown: '', crit: null, error: 'Boş ifade' }
   }
+
+  const favour = clampFavour(opts.favour ?? ambientFavour)
+  activeFavour = favour
 
   const collected: DieRoll[] = []
   try {
@@ -304,6 +390,7 @@ export function roll(expression: string): RollResult {
       dice: collected,
       breakdown: describe(collected, trimmed),
       crit,
+      favoured: favour > 0,
     }
   } catch (err) {
     return {
@@ -314,14 +401,21 @@ export function roll(expression: string): RollResult {
       crit: null,
       error: err instanceof Error ? err.message : 'Zar ifadesi çözümlenemedi',
     }
+  } finally {
+    // Leaving it set would silently taint the next caller that passes nothing.
+    activeFavour = 0
   }
 }
 
 /** Roll a d20 with advantage / disadvantage / straight, plus a modifier. */
-export function rollD20(modifier = 0, mode: 'normal' | 'adv' | 'dis' = 'normal'): RollResult {
+export function rollD20(
+  modifier = 0,
+  mode: 'normal' | 'adv' | 'dis' = 'normal',
+  opts: RollOptions = {},
+): RollResult {
   const base = mode === 'adv' ? '2d20kh1' : mode === 'dis' ? '2d20kl1' : '1d20'
   const mod = modifier === 0 ? '' : modifier > 0 ? `+${modifier}` : `${modifier}`
-  return roll(`${base}${mod}`)
+  return roll(`${base}${mod}`, opts)
 }
 
 /** Average result of an expression, used for "take the average" damage. */

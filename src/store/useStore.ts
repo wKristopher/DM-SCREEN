@@ -6,7 +6,7 @@
  * server and no account — the campaign is the browser's.
  */
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { Monster } from '../lib/open5e'
@@ -15,8 +15,8 @@ import type { BrewPack } from '../lib/homebrew'
 import type { ProviderId } from '../lib/ai/providers'
 import { PROVIDERS } from '../lib/ai/providers'
 import { emptyPack, tablesToExtra } from '../lib/homebrew'
-import { roll, abilityMod } from '../lib/dice'
-import type { RollResult } from '../lib/dice'
+import { roll, abilityMod, setAmbientFavour, FAVOUR_LEVELS } from '../lib/dice'
+import type { RollResult, FavourLevel } from '../lib/dice'
 
 /* ------------------------------------------------------------------ types */
 
@@ -93,6 +93,13 @@ export interface Settings {
   fastSource: boolean
   /** Surface per-source response times in the compendium header. */
   showTimings: boolean
+  dice: DiceSettings
+}
+
+export interface DiceSettings {
+  /** 'fair' is an honest die; 'favoured' leans the roller high. */
+  mode: 'fair' | 'favoured'
+  level: FavourLevel['id']
 }
 
 interface State {
@@ -183,6 +190,7 @@ const DEFAULT_SETTINGS: Settings = {
   showHpBars: true,
   fastSource: true,
   showTimings: true,
+  dice: { mode: 'fair', level: 'medium' },
 }
 
 /* ------------------------------------------------------------------ store */
@@ -499,10 +507,12 @@ export const useStore = create<State>()(
           llm.enabled = saved.llmEnabled ?? false
         }
 
+        const dice = { ...DEFAULT_SETTINGS.dice, ...(saved.dice ?? {}) }
+
         return {
           ...current,
           ...p,
-          settings: { ...DEFAULT_SETTINGS, ...saved, llm },
+          settings: { ...DEFAULT_SETTINGS, ...saved, llm, dice },
         }
       },
     },
@@ -521,6 +531,26 @@ export const useStore = create<State>()(
  */
 
 const selectPacks = (s: State) => s.packs
+
+/** Favour currently in force, 0 when the roller is honest. */
+export function diceFavourOf(dice: DiceSettings): number {
+  if (dice.mode !== 'favoured') return 0
+  return FAVOUR_LEVELS.find((l) => l.id === dice.level)?.favour ?? 0
+}
+
+/**
+ * Push the dice setting into the engine.
+ *
+ * The engine cannot read the store — the store reads the engine — so the value
+ * travels the one direction that does not close a cycle. Mounted once at the
+ * app root so every roll site inherits it without threading a prop anywhere.
+ */
+export function useDiceFavourSync(): void {
+  const dice = useStore((s) => s.settings.dice)
+  useEffect(() => {
+    setAmbientFavour(diceFavourOf(dice))
+  }, [dice])
+}
 
 export function useExtraTables(): Record<string, string[]> {
   const packs = useStore(selectPacks)

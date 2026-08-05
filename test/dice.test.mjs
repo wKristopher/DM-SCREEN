@@ -1,5 +1,13 @@
 /** Statistical + behavioural checks on the dice engine. Run: node dice.test.mjs */
-import { roll, averageOf, abilityMod, signed } from '../src/lib/dice.ts'
+import {
+  roll,
+  averageOf,
+  abilityMod,
+  signed,
+  setAmbientFavour,
+  expectedD20,
+  FAVOUR_LEVELS,
+} from '../src/lib/dice.ts'
 
 let pass = 0
 let fail = 0
@@ -89,6 +97,69 @@ check('abilityMod 18 = 4', abilityMod(18) === 4)
 check('abilityMod 7 = -2', abilityMod(7) === -2)
 check('signed +3', signed(3) === '+3')
 check('signed -1', signed(-1) === '-1')
+
+// --- favoured mode -------------------------------------------------------
+//
+// The point of the mode is a distribution, not a single roll, so it is
+// checked the only way a distribution can be: by sampling it.
+
+const meanOf = (expr, n, opts) => {
+  let sum = 0
+  for (let i = 0; i < n; i++) sum += roll(expr, opts).total
+  return sum / n
+}
+
+const N = 30000
+// Standard error of a d20 mean over N samples is ~5.77/sqrt(N) ≈ 0.033, so a
+// 0.35 window is ~10 sigma: wide enough never to flake, tight enough that any
+// real drift in the bias fails it.
+const TOL = 0.35
+
+check('fair by default', Math.abs(meanOf('1d20', N) - 10.5) < TOL, `got ${meanOf('1d20', 4000).toFixed(2)}`)
+
+for (const level of FAVOUR_LEVELS) {
+  const got = meanOf('1d20', N, { favour: level.favour })
+  const want = expectedD20(level.favour)
+  check(`favour "${level.id}" lands on its stated d20 average (${want})`, Math.abs(got - want) < TOL, `got ${got.toFixed(2)}`)
+}
+
+// Full favour is exactly advantage, which the engine already models as 2d20kh1.
+{
+  const full = meanOf('1d20', N, { favour: 1 })
+  const adv = meanOf('2d20kh1', N)
+  check('favour 1 matches advantage', Math.abs(full - adv) < TOL, `${full.toFixed(2)} vs ${adv.toFixed(2)}`)
+}
+
+// Monotonic: more favour is never fewer pips.
+{
+  const means = [0, 0.35, 0.7, 1].map((f) => meanOf('1d20', N, { favour: f }))
+  check('higher favour never lowers the average', means.every((m, i) => i === 0 || m > means[i - 1] - TOL), means.map((m) => m.toFixed(2)).join(' < '))
+}
+
+// The bias rides on the die, so keep/drop still does its job on top of it.
+check('favoured rolls still respect kh/kl', roll('4d6kh3', { favour: 1 }).total <= 18)
+check('favoured rolls stay inside the die', Array.from({ length: 800 }, () => roll('1d6', { favour: 1 }).total).every((t) => t >= 1 && t <= 6))
+check('disadvantage still lands below straight', meanOf('2d20kl1', 8000, { favour: 0.35 }) < meanOf('1d20', 8000, { favour: 0.35 }))
+
+// Results carry the flag, so the log can never quietly lose it.
+check('a favoured roll says so', roll('1d20', { favour: 0.7 }).favoured === true)
+check('a fair roll says so', roll('1d20', { favour: 0 }).favoured === false)
+
+// The ambient setting is what the app pushes in from settings.
+setAmbientFavour(1)
+check('ambient favour applies without opts', Math.abs(meanOf('1d20', N) - 13.825) < TOL)
+check('an explicit 0 overrides the ambient setting', Math.abs(meanOf('1d20', N, { favour: 0 }) - 10.5) < TOL)
+setAmbientFavour(0)
+check('ambient favour can be turned back off', Math.abs(meanOf('1d20', N) - 10.5) < TOL)
+
+// A thrown parse error must not leave the next caller secretly favoured.
+setAmbientFavour(1)
+roll('((((', { favour: 1 })
+setAmbientFavour(0)
+check('a failed roll does not leak favour onto the next one', Math.abs(meanOf('1d20', N) - 10.5) < TOL)
+
+check('out-of-range favour is clamped, not obeyed', Math.abs(meanOf('1d20', N, { favour: 9 }) - 13.825) < TOL)
+check('negative favour is treated as fair', Math.abs(meanOf('1d20', N, { favour: -3 }) - 10.5) < TOL)
 
 console.log(`${pass} passed, ${fail} failed`)
 globalThis.__failures = (globalThis.__failures ?? 0) + fail
