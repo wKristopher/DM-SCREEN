@@ -69,7 +69,9 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
       { id: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite', note: 'en hızlı ve ucuz' },
     ],
     defaultModel: 'gemini-3.6-flash',
-    keyPlaceholder: 'AIza…',
+    // Google issues both AIza… and AQ.… keys; anchoring on one makes the other
+    // look wrong to anyone pasting it in.
+    keyPlaceholder: 'AIza… veya AQ.…',
     keyUrl: 'https://aistudio.google.com/apikey',
     hint: 'aistudio.google.com → Get API key',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com',
@@ -208,32 +210,43 @@ async function readSse(
   let buffer = ''
   let full = ''
 
+  const consume = (event: string) => {
+    // Lines may carry a trailing \r; trim() below takes care of it.
+    for (const line of event.split('\n')) {
+      if (!line.startsWith('data:')) continue
+      const data = line.slice(5).trim()
+      if (!data || data === '[DONE]') continue
+      try {
+        const text = extract(JSON.parse(data) as Record<string, unknown>)
+        if (text) {
+          full += text
+          onDelta(text)
+        }
+      } catch {
+        // A malformed frame is not worth aborting a whole generation over.
+      }
+    }
+  }
+
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
 
-    // SSE events are separated by a blank line; a chunk can split one in half.
-    const events = buffer.split('\n\n')
+    // Events are separated by a blank line — but "blank" is CRLF CRLF as often
+    // as LF LF. Gemini uses the CRLF form, and splitting on '\n\n' alone finds
+    // no boundary in it at all: every event stays stuck in the buffer and the
+    // stream ends having yielded nothing, with no error to explain why.
+    const events = buffer.split(/\r?\n\r?\n/)
     buffer = events.pop() ?? ''
-
-    for (const event of events) {
-      for (const line of event.split('\n')) {
-        if (!line.startsWith('data:')) continue
-        const data = line.slice(5).trim()
-        if (!data || data === '[DONE]') continue
-        try {
-          const text = extract(JSON.parse(data) as Record<string, unknown>)
-          if (text) {
-            full += text
-            onDelta(text)
-          }
-        } catch {
-          // A malformed frame is not worth aborting a whole generation over.
-        }
-      }
-    }
+    for (const event of events) consume(event)
   }
+
+  // Flush whatever multi-byte character was mid-decode, then the tail. A
+  // provider that ends its last event without a trailing blank line would
+  // otherwise lose it — silently, which is the worst way to lose it.
+  buffer += decoder.decode()
+  if (buffer.trim()) consume(buffer)
 
   return full
 }
@@ -307,5 +320,13 @@ export async function testConnection(cfg: LlmConfig): Promise<string> {
   const started = performance.now()
   const out = await runCompletion(cfg, 'Kısa cevap ver.', 'Sadece "bağlandı" yaz.')
   const ms = Math.round(performance.now() - started)
-  return `${out.slice(0, 40) || 'yanıt alındı'} · ${ms}ms`
+
+  // An empty stream used to be reported as "yanıt alındı", which read as
+  // success — and that is exactly how a CRLF parsing bug hid here for a while.
+  // No text means something is wrong, so say so.
+  if (!out.trim()) {
+    throw new LlmError(`Sunucuya ulaşıldı (${ms}ms) ama yanıt boş döndü — model adını kontrol et.`)
+  }
+
+  return `${out.slice(0, 40)} · ${ms}ms`
 }

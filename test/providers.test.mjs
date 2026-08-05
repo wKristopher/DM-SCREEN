@@ -17,13 +17,20 @@ const check = (name, cond, extra = '') => {
   }
 }
 
-/** Build a Response whose body streams the given SSE frames. */
-function sseResponse(frames) {
+/**
+ * Build a Response whose body streams the given SSE frames.
+ *
+ * `eol` matters more than it looks. This helper used to hardcode '\n', so every
+ * test agreed with a parser that only understood '\n' — and Gemini, which ends
+ * its events with CRLF, failed in the real world while the suite stayed green.
+ */
+function sseResponse(frames, { eol = '\n', trailingBlankLine = true } = {}) {
   const body = new ReadableStream({
     start(c) {
       const enc = new TextEncoder()
+      let text = frames.map((f) => `data: ${JSON.stringify(f)}${eol}${eol}`).join('')
+      if (!trailingBlankLine) text = text.slice(0, -eol.length * 2)
       // Split across chunk boundaries mid-frame to prove the buffering works.
-      const text = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join('')
       const mid = Math.floor(text.length / 2)
       c.enqueue(enc.encode(text.slice(0, mid)))
       c.enqueue(enc.encode(text.slice(mid)))
@@ -107,6 +114,38 @@ check('gemini header auth, not query param', captured.init.headers['x-goog-api-k
 check('gemini key stays out of the URL', !captured.url.includes('test-key'), captured.url)
 check('gemini systemInstruction', captured.body.systemInstruction.parts[0].text === 'SYS')
 check('gemini contents', captured.body.contents[0].parts[0].text.includes('USER'))
+
+// Captured from a real generativelanguage.googleapis.com response: CRLF
+// separators, and a thought part carrying an empty string next to the answer.
+stubFetch(() =>
+  sseResponse(
+    [
+      { candidates: [{ content: { parts: [{ text: 'bağ' }], role: 'model' }, index: 0 }] },
+      { candidates: [{ content: { parts: [{ text: '', thoughtSignature: 'EqUECqIEAR' }] } }] },
+      { candidates: [{ content: { parts: [{ text: 'landı' }], role: 'model' }, index: 0 }] },
+    ],
+    { eol: '\r\n' },
+  ),
+)
+out = await runCompletion(cfg('gemini'), 'SYS', 'USER')
+check('gemini CRLF-separated events are parsed', out === 'bağlandı', `got "${out}"`)
+
+// The last event of a stream does not always come with a trailing blank line.
+stubFetch(() =>
+  sseResponse([{ candidates: [{ content: { parts: [{ text: 'son söz' }] } }] }], {
+    eol: '\r\n',
+    trailingBlankLine: false,
+  }),
+)
+out = await runCompletion(cfg('gemini'), 'SYS', 'USER')
+check('final event without a trailing blank line is not dropped', out === 'son söz', `got "${out}"`)
+
+// The same tail rule has to hold for the LF providers.
+stubFetch(() =>
+  sseResponse([{ choices: [{ delta: { content: 'son söz' } }] }], { trailingBlankLine: false }),
+)
+out = await runCompletion(cfg('openai'), 'SYS', 'USER')
+check('openai final event without a trailing blank line', out === 'son söz', `got "${out}"`)
 
 /* ------------------------------------------------------------- compatible */
 
