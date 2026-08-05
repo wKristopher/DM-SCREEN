@@ -349,7 +349,7 @@ function LlmBox() {
     setErr(null)
     setOut('')
     try {
-      await runLlm(
+      const text = await runLlm(
         {
           provider: llm.provider,
           apiKey: key,
@@ -360,6 +360,12 @@ function LlmBox() {
         context,
         { signal: controller.signal, onDelta: (d) => setOut((p) => p + d) },
       )
+      // A run that finishes with nothing to show has failed, whatever the
+      // status code said. Silence here is indistinguishable from a broken
+      // button, so name it instead of leaving the panel blank.
+      if (!text.trim() && !controller.signal.aborted) {
+        setErr('Sağlayıcı boş yanıt döndü. Başka bir model dene ya da bağlamı kısalt.')
+      }
     } catch (e) {
       if (!controller.signal.aborted) setErr(e instanceof LlmError ? e.message : 'Beklenmeyen hata')
     } finally {

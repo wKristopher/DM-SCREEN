@@ -222,5 +222,84 @@ check(
   ),
 )
 
+/* ------------------------------------------------------------- deadlines */
+
+/**
+ * A hung request used to leave the UI on "Durdur" forever: no text, no error,
+ * nothing to react to. These stubs honour the abort signal the way a real
+ * fetch does, so the deadlines are exercised rather than assumed.
+ */
+const aborted = () => new DOMException('The operation was aborted.', 'AbortError')
+
+// Never answers at all.
+globalThis.fetch = (url, init) =>
+  new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(aborted())))
+
+let caught = null
+try {
+  await runCompletion(cfg('gemini'), 'SYS', 'USER', { connectTimeoutMs: 60 })
+} catch (e) {
+  caught = e
+}
+check('a provider that never answers times out', caught instanceof LlmError, String(caught))
+check('and says why', /yanıt vermedi/.test(caught?.message ?? ''), caught?.message)
+
+// Answers, streams one delta, then goes silent forever.
+globalThis.fetch = async (url, init) => {
+  const enc = new TextEncoder()
+  return new Response(
+    new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'yarım' }] } }] })}\r\n\r\n`))
+        init.signal?.addEventListener('abort', () => c.error(aborted()))
+      },
+    }),
+    { status: 200 },
+  )
+}
+
+caught = null
+try {
+  await runCompletion(cfg('gemini'), 'SYS', 'USER', { stallTimeoutMs: 60 })
+} catch (e) {
+  caught = e
+}
+check('a stream that goes silent mid-answer times out', caught instanceof LlmError, String(caught))
+
+// Slow but steady must survive: each gap is under the stall window even though
+// the whole generation runs well past it.
+globalThis.fetch = async (url, init) => {
+  const enc = new TextEncoder()
+  const frames = ['bir ', 'iki ', 'üç ', 'dört ', 'beş']
+  let i = 0
+  return new Response(
+    new ReadableStream({
+      async pull(c) {
+        if (i >= frames.length) return c.close()
+        await new Promise((r) => setTimeout(r, 40))
+        c.enqueue(enc.encode(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: frames[i++] }] } }] })}\r\n\r\n`))
+      },
+    }),
+    { status: 200 },
+  )
+}
+
+out = await runCompletion(cfg('gemini'), 'SYS', 'USER', { stallTimeoutMs: 120 })
+check('a slow but steady stream is not cut off', out === 'bir iki üç dört beş', `got "${out}"`)
+
+// Stopping on purpose must not read as a failure.
+const stopper = new AbortController()
+globalThis.fetch = (url, init) =>
+  new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(aborted())))
+setTimeout(() => stopper.abort(), 30)
+
+caught = null
+try {
+  await runCompletion(cfg('gemini'), 'SYS', 'USER', { signal: stopper.signal })
+} catch (e) {
+  caught = e
+}
+check('a user-cancelled run says it was cancelled', /İptal/.test(caught?.message ?? ''), caught?.message)
+
 console.log(`${pass} passed, ${fail} failed`)
 globalThis.__failures = (globalThis.__failures ?? 0) + fail

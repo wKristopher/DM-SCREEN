@@ -65,10 +65,14 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
     id: 'gemini',
     label: 'Gemini',
     models: [
-      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', note: 'dengeli' },
-      { id: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite', note: 'en hızlı ve ucuz' },
+      // Flash-Lite leads because it is the better table default by a wide
+      // margin: ~1s per generation against ~5-9s, and the free tier allows
+      // only 20 requests a day on 3.6 Flash — a single session burns through
+      // that. Measured, not assumed.
+      { id: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite', note: 'en hızlı · ücretsiz kotası geniş' },
+      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', note: 'daha iyi metin · ücretsizde 20 istek/gün' },
     ],
-    defaultModel: 'gemini-3.6-flash',
+    defaultModel: 'gemini-3.5-flash-lite',
     // Google issues both AIza… and AQ.… keys; anchoring on one makes the other
     // look wrong to anyone pasting it in.
     keyPlaceholder: 'AIza… veya AQ.…',
@@ -109,6 +113,19 @@ interface BuiltRequest {
 }
 
 const MAX_OUTPUT_TOKENS = 4096
+
+/**
+ * How long to wait for the provider to start answering.
+ *
+ * Generous on purpose: a thinking model sends nothing at all while it reasons,
+ * and measured runs put the slowest first byte well past twenty seconds. The
+ * "Durdur" button is the user's escape hatch — this deadline only exists to
+ * stop a dead connection from spinning forever.
+ */
+const CONNECT_TIMEOUT_MS = 60_000
+
+/** How long a stream may go silent mid-answer before we call it dead. */
+const STALL_TIMEOUT_MS = 30_000
 
 function buildRequest(cfg: LlmConfig, system: string, user: string): BuiltRequest {
   const base = (cfg.baseUrl || PROVIDERS[cfg.provider].defaultBaseUrl).replace(/\/+$/, '')
@@ -151,7 +168,13 @@ function buildRequest(cfg: LlmConfig, system: string, user: string): BuiltReques
         body: {
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+          generationConfig: {
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            // Same call as Anthropic's low effort: flavour text does not need
+            // deep reasoning, and thinking is pure latency at the table —
+            // it delayed the first byte past half a minute on some prompts.
+            thinkingConfig: { thinkingLevel: 'low' },
+          },
         },
         extract: (p) => {
           const candidates = p.candidates as
@@ -273,6 +296,10 @@ function describeError(status: number, raw: string, provider: ProviderId): strin
 export interface RunOptions {
   signal?: AbortSignal
   onDelta?: (text: string) => void
+  /** Wait for the first byte. Defaults to CONNECT_TIMEOUT_MS. */
+  connectTimeoutMs?: number
+  /** Longest silence tolerated mid-stream. Defaults to STALL_TIMEOUT_MS. */
+  stallTimeoutMs?: number
 }
 
 export async function runCompletion(
@@ -286,16 +313,49 @@ export async function runCompletion(
 
   const req = buildRequest(cfg, system, user)
 
+  // Two separate deadlines, because generations are legitimately slow but
+  // silence is not. A single overall cap would cut off a long answer that is
+  // arriving fine; a stall timer only fires when nothing has moved at all.
+  const ctl = new AbortController()
+  const relay = () => ctl.abort()
+  opts.signal?.addEventListener('abort', relay, { once: true })
+  if (opts.signal?.aborted) ctl.abort()
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let expired = false
+  const arm = (ms: number) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      expired = true
+      ctl.abort()
+    }, ms)
+  }
+  const disarm = () => {
+    clearTimeout(timer)
+    opts.signal?.removeEventListener('abort', relay)
+  }
+
+  /** Turn an abort into the reason it actually happened for. */
+  const abortReason = (): LlmError =>
+    expired
+      ? new LlmError('Sağlayıcı yanıt vermedi. Ağını, anahtarını ve adresi kontrol et.')
+      : new LlmError('İptal edildi.')
+
+  const connectMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
+  const stallMs = opts.stallTimeoutMs ?? STALL_TIMEOUT_MS
+
   let res: Response
+  arm(connectMs)
   try {
     res = await fetch(req.url, {
       method: 'POST',
       headers: req.headers,
       body: JSON.stringify(req.body),
-      signal: opts.signal,
+      signal: ctl.signal,
     })
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') throw new LlmError('İptal edildi.')
+    disarm()
+    if (err instanceof DOMException && err.name === 'AbortError') throw abortReason()
     // OpenAI omits CORS headers on its error responses, so an invalid key
     // surfaces here as an opaque network failure rather than a readable 401.
     if (cfg.provider === 'openai' || cfg.provider === 'compatible') {
@@ -308,11 +368,27 @@ export async function runCompletion(
   }
 
   if (!res.ok) {
+    disarm()
     const raw = await res.text().catch(() => '')
     throw new LlmError(describeError(res.status, raw, cfg.provider))
   }
 
-  return (await readSse(res, req.extract, opts.onDelta ?? (() => {}))).trim()
+  const onDelta = opts.onDelta ?? (() => {})
+  try {
+    // Every delta pushes the deadline out, so a stream that is still talking
+    // is never interrupted and one that went quiet does not hang the button.
+    arm(stallMs)
+    const out = await readSse(res, req.extract, (text) => {
+      arm(stallMs)
+      onDelta(text)
+    })
+    return out.trim()
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw abortReason()
+    throw err instanceof LlmError ? err : new LlmError('Yanıt akışı yarıda kesildi.')
+  } finally {
+    disarm()
+  }
 }
 
 /** Cheap round trip used by the "test connection" button. */
