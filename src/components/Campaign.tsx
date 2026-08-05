@@ -1,8 +1,12 @@
 /** Party roster, session notes, the log, and settings. */
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { clearCache, cacheStats } from '../lib/open5e'
+import {
+  buildBackup, downloadBackup, parseBackup, summarise, formatSavedAt,
+  type Backup, type BackupSummary,
+} from '../lib/backup'
 import { PROVIDERS, PROVIDER_ORDER, testConnection, LlmError } from '../lib/ai/providers'
 import { Icons, Panel, Empty, Field, Modal } from './ui'
 
@@ -419,6 +423,8 @@ function SettingsBlock() {
         </button>
       </div>
 
+      <BackupBlock />
+
       <p className="text-[0.66rem] leading-relaxed" style={{ color: 'var(--ink-mute)' }}>
         İçerik <strong>Open5e</strong> üzerinden gelir: SRD 5.1 ve Kobold Press gibi açık lisanslı (OGL 1.0a / CC-BY-4.0 /
         ORC) kaynaklar. Tüm veriler yalnızca bu tarayıcıda tutulur.
@@ -427,10 +433,117 @@ function SettingsBlock() {
   )
 }
 
+/**
+ * Backup and restore.
+ *
+ * Restoring overwrites a campaign, so it is deliberately a two-step: pick the
+ * file, read what is actually in it, then confirm. A one-click restore that
+ * silently replaces months of notes is a worse feature than none.
+ */
+function BackupBlock() {
+  const snapshot = useStore((s) => s.snapshot)
+  const restore = useStore((s) => s.restore)
+  const [pending, setPending] = useState<{ backup: Backup; summary: BackupSummary } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const read = async (file: File) => {
+    setErr(null)
+    setDone(false)
+    try {
+      const backup = parseBackup(await file.text())
+      setPending({ backup, summary: summarise(backup) })
+    } catch (e) {
+      setPending(null)
+      setErr(e instanceof Error ? e.message : 'Dosya okunamadı.')
+    }
+  }
+
+  return (
+    <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-deep)' }}>
+      <p className="text-[0.82rem] font-medium">Yedekle ve geri yükle</p>
+      <p className="text-[0.68rem] leading-relaxed" style={{ color: 'var(--ink-mute)' }}>
+        Grup, notlar, günlük, derlemeler ve ayarlar tek dosyada. Tarayıcını temizlersen ya da başka bir
+        cihazdan devam etmek istersen bu dosya her şeyi geri getirir. <strong>API anahtarların dosyaya
+        yazılmaz</strong> — yedeğini paylaşman güvenli olsun diye.
+      </p>
+
+      <div className="flex gap-1.5 flex-wrap">
+        <button className="btn btn-xs" onClick={() => downloadBackup(buildBackup(snapshot()))}>
+          <Icons.download className="w-3 h-3" /> Yedek indir
+        </button>
+        <button className="btn btn-xs" onClick={() => fileRef.current?.click()}>
+          <Icons.upload className="w-3 h-3" /> Dosyadan geri yükle
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) void read(f)
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      {err && (
+        <p className="text-[0.72rem] px-2 py-1 rounded-lg" style={{ background: 'var(--rose-wash)', color: 'var(--rose)' }}>
+          {err}
+        </p>
+      )}
+
+      {done && (
+        <p className="text-[0.72rem] px-2 py-1 rounded-lg" style={{ background: 'var(--sage-wash)', color: 'var(--sage)' }}>
+          Geri yüklendi.
+        </p>
+      )}
+
+      {pending && (
+        <div className="rounded-xl p-2.5 space-y-2" style={{ background: 'var(--bg-panel)', border: '1px solid var(--line-soft)' }}>
+          <p className="text-[0.72rem]" style={{ color: 'var(--ink-soft)' }}>
+            <strong>{formatSavedAt(pending.summary.savedAt)}</strong> tarihli yedek:
+          </p>
+          <ul className="text-[0.7rem] space-y-0.5" style={{ color: 'var(--ink-mute)' }}>
+            <li>{pending.summary.party} karakter</li>
+            <li>{pending.summary.logEntries} günlük satırı</li>
+            <li>{pending.summary.noteChars} karakterlik not</li>
+            <li>
+              {pending.summary.packs} derleme · {pending.summary.brewEntries} kayıt
+            </li>
+          </ul>
+          <p className="text-[0.68rem]" style={{ color: 'var(--rose)' }}>
+            Bu, şu andaki grubunun, notlarının ve günlüğünün yerine geçer. Önce mevcut hâlin yedeğini almak
+            iyi olur.
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              className="btn btn-accent btn-xs flex-1"
+              onClick={() => {
+                restore(pending.backup.data)
+                setPending(null)
+                setDone(true)
+              }}
+            >
+              Üstüne yaz
+            </button>
+            <button className="btn btn-xs flex-1" onClick={() => setPending(null)}>
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ panel */
 
 export function Campaign() {
   const [danger, setDanger] = useState(false)
+  const snapshot = useStore((s) => s.snapshot)
 
   return (
     <Panel
@@ -455,10 +568,15 @@ export function Campaign() {
       </div>
 
       <Modal open={danger} onClose={() => setDanger(false)} title="Emin misin?">
-        <p className="text-[0.85rem] mb-4" style={{ color: 'var(--ink-soft)' }}>
+        <p className="text-[0.85rem] mb-3" style={{ color: 'var(--ink-soft)' }}>
           Grup, notlar, günlük, homebrew derlemelerin ve ayarların dahil <strong>her şey</strong> silinir. Bu geri
-          alınamaz — homebrew paketlerini önce Ocak sekmesinden dışa aktarmak isteyebilirsin.
+          alınamaz.
         </p>
+        {/* Offered right here rather than described: the moment someone is
+            about to wipe a campaign is the moment a backup is worth most. */}
+        <button className="btn btn-xs mb-4" onClick={() => downloadBackup(buildBackup(snapshot()))}>
+          <Icons.download className="w-3 h-3" /> Önce yedeğini indir
+        </button>
         <div className="flex gap-2">
           <button className="btn flex-1" onClick={() => setDanger(false)}>
             Vazgeç

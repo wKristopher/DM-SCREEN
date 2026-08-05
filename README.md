@@ -70,7 +70,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 196 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik
+npm run test       # 229 test: zar, niyet yönlendirici, şema, sağlayıcılar, kimlik, yedek
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
@@ -221,6 +221,27 @@ Ocak sekmesi tam bir içerik editörüdür:
 
 Derlemeler `.brew.json` olarak dışa aktarılır ve dosyadan ya da URL'den içe
 aktarılır — arkadaşınla paylaşman için.
+
+---
+
+## Yedekleme
+
+Hesap yok, sunucu yok — bunun bedeli, her şeyin tek bir tarayıcının
+`localStorage`'ında durması. Tarayıcıyı temizlemek ya da başka bir cihaza
+geçmek kampanyayı götürür. Kampanya → Ayarlar'daki **Yedekle ve geri yükle**
+bunu kapatır: grup, notlar, günlük, derlemeler, savaş durumu ve ayarlar tek bir
+`kahin-yedek-YYYY-AA-GG.json` dosyasında.
+
+İki ayrıntı bilerek böyle:
+
+- **API anahtarları dosyaya yazılmaz.** Yedek e-postayla kendine gönderilen,
+  paylaşılan bir dosyadır; anahtarın onunla seyahat etmesi çok masum görünen bir
+  sızıntı olurdu. Sağlayıcı ve model tercihi kalır, anahtar kalmaz.
+- **Geri yükleme iki adımlıdır.** Dosya seçilir, içinde ne olduğu (tarih, kaç
+  karakter, kaç günlük satırı, kaç derleme) ekranda gösterilir, sonra onaylanır.
+  Aylık notların üstüne tek tıkla yazan bir özellik, olmayan özellikten kötüdür.
+
+Geri yükleme tarayıcıda hâlihazırda girili olan API anahtarlarını silmez.
 
 ---
 

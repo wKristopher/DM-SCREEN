@@ -12,6 +12,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { Monster } from '../lib/open5e'
 import { passivePerception } from '../lib/open5e'
 import type { BrewPack } from '../lib/homebrew'
+import type { BackupData } from '../lib/backup'
 import type { ProviderId } from '../lib/ai/providers'
 import { PROVIDERS } from '../lib/ai/providers'
 import { emptyPack, tablesToExtra } from '../lib/homebrew'
@@ -159,6 +160,11 @@ interface State {
 
   /* -------------------------------------------------- settings */
   setSettings: (patch: Partial<Settings>) => void
+
+  /** Everything worth keeping, in the shape a backup file carries. */
+  snapshot: () => BackupData
+  /** Replace the campaign with a backup's contents. */
+  restore: (data: BackupData) => void
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -472,6 +478,46 @@ export const useStore = create<State>()(
       /* ---------------------------------------------------------- settings */
 
       setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+
+      snapshot: () => {
+        const s = get()
+        return {
+          combatants: s.combatants,
+          round: s.round,
+          turn: s.turn,
+          combatActive: s.combatActive,
+          party: s.party,
+          notes: s.notes,
+          log: s.log,
+          packs: s.packs,
+          activePackId: s.activePackId,
+          settings: s.settings,
+        }
+      },
+
+      restore: (data) =>
+        set((s) => {
+          const incoming = (data.settings ?? {}) as Partial<Settings>
+          return {
+            combatants: (data.combatants as Combatant[]) ?? [],
+            round: data.round ?? 1,
+            turn: data.turn ?? 0,
+            combatActive: data.combatActive ?? false,
+            party: (data.party as PartyMember[]) ?? [],
+            notes: data.notes ?? '',
+            log: (data.log as LogEntry[]) ?? [],
+            packs: data.packs ?? [],
+            activePackId: data.activePackId ?? null,
+            settings: {
+              ...DEFAULT_SETTINGS,
+              ...incoming,
+              // Backups deliberately carry no API keys, so restoring one must
+              // not wipe the keys already typed into this browser.
+              llm: { ...DEFAULT_SETTINGS.llm, ...(incoming.llm ?? {}), keys: s.settings.llm.keys, enabled: s.settings.llm.enabled },
+              dice: { ...DEFAULT_SETTINGS.dice, ...(incoming.dice ?? {}) },
+            },
+          }
+        }),
     }),
     {
       name: 'kahin.state',
