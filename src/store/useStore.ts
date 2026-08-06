@@ -18,6 +18,7 @@ import { PROVIDERS } from '../lib/ai/providers'
 import { emptyPack, tablesToExtra } from '../lib/homebrew'
 import { roll, abilityMod, setAmbientFavour, FAVOUR_LEVELS } from '../lib/dice'
 import type { RollResult, FavourLevel } from '../lib/dice'
+import { blankSheet, normaliseSheet, type CharacterSheet, type PassiveSkill } from '../lib/character'
 
 /* ------------------------------------------------------------------ types */
 
@@ -49,7 +50,7 @@ export interface Combatant {
   secret: boolean
 }
 
-export interface PartyMember {
+export interface PartyMember extends CharacterSheet {
   id: string
   name: string
   player: string
@@ -57,9 +58,6 @@ export interface PartyMember {
   level: number
   ac: number
   maxHp: number
-  passivePerception: number
-  passiveInvestigation: number
-  passiveInsight: number
   notes: string
 }
 
@@ -269,9 +267,13 @@ export const useStore = create<State>()(
         const { party, combatants, settings } = get()
         for (const p of party) {
           if (combatants.some((c) => c.isPc && c.name === p.name)) continue
+          // The roster knows their DEX now, so initiative is rolled properly
+          // rather than as a bare d20 the DM has to adjust in their head.
+          const dexMod = abilityMod(p.abilities?.dex ?? 10)
           get().addCombatant({
             name: p.name,
-            initiative: settings.autoRollInitiative ? roll('1d20').total : 0,
+            initiative: settings.autoRollInitiative ? roll(`1d20${dexMod >= 0 ? '+' : ''}${dexMod}`).total : 0,
+            dexMod,
             ac: p.ac,
             hp: p.maxHp,
             maxHp: p.maxHp,
@@ -416,10 +418,8 @@ export const useStore = create<State>()(
               level: 1,
               ac: 14,
               maxHp: 10,
-              passivePerception: 10,
-              passiveInvestigation: 10,
-              passiveInsight: 10,
               notes: '',
+              ...blankSheet(),
             },
           ],
         })),
@@ -555,9 +555,46 @@ export const useStore = create<State>()(
 
         const dice = { ...DEFAULT_SETTINGS.dice, ...(saved.dice ?? {}) }
 
+        /**
+         * Rosters written before character sheets existed stored the three
+         * passive scores as plain numbers and had no ability scores to
+         * recompute them from. Deriving would silently replace a real 15 with
+         * a 10, so they are carried across as manual values instead.
+         */
+        const party = (p.party ?? []).map((raw) => {
+          const m = raw as PartyMember & Partial<Record<`passive${PassiveSkill}`, number>>
+          const sheet = normaliseSheet(m)
+          const overrides = { ...sheet.passiveOverrides }
+
+          // `abilities` is the marker that a member has already been through
+          // here. Without it the legacy numbers would be re-applied on every
+          // load — deleting them below only cleans the in-memory copy, and the
+          // raw localStorage entry keeps them until the next write. That made
+          // "back to the derived value" undo itself on refresh.
+          if (!m.abilities) {
+            const legacy: Array<[PassiveSkill, number | undefined]> = [
+              ['Perception', m.passivePerception],
+              ['Investigation', m.passiveInvestigation],
+              ['Insight', m.passiveInsight],
+            ]
+            for (const [skill, value] of legacy) {
+              if (typeof value === 'number' && overrides[skill] === undefined) overrides[skill] = value
+            }
+          }
+          // Drop the legacy fields once carried across. Leaving them would make
+          // the migration re-apply them on every load, so "back to the derived
+          // value" would appear to work and then silently undo itself.
+          const migrated = { ...m, ...sheet, passiveOverrides: overrides }
+          delete migrated.passivePerception
+          delete migrated.passiveInvestigation
+          delete migrated.passiveInsight
+          return migrated
+        })
+
         return {
           ...current,
           ...p,
+          party,
           settings: { ...DEFAULT_SETTINGS, ...saved, llm, dice },
         }
       },

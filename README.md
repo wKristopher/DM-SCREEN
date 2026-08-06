@@ -37,6 +37,30 @@ Tuzak var mı?     → evet/hayır kâhini
 
 `Alt+1…6` sekmeler arasında gezer.
 
+### Karakter kağıtları
+
+Kampanya → Grup'ta her oyuncu karakteri **statblock gibi** açılır: aynı düzen,
+aynı dil, aynı zar düğmeleri. Yaratıkla karakter arasında gidip gelirken ikisinin
+farklı okunması masada her seferinde bir saniye yiyor.
+
+Kartta ne var: AC, HP, hız, inisiyatif, üç passive skor, altı yetenek (tıklayınca
+kontrol atar), kurtarma ve beceri yeterlilikleri, duyular, diller, dirençler,
+spell save DC ve saldırılar (hasar zarı atılabilir).
+
+**Türetilebilen hiçbir şey elle yazılmaz.** Yeterlilik bonusu seviyeden, kurtarma
+ve beceri toplamları puan + yeterlilikten, passive skorlar `10 + beceri`'den,
+spell DC `8 + yeterlilik + yetenek`'ten hesaplanır. Elle girilen bir roster iki
+seviye sonra sessizce yanlıştır ve ona güvenen DM bunu hiç fark etmez. Sen
+puanları girersin, sonuçlar kendi kendini düzeltir — seviye 5'ten 9'a çıktığında
+passive Perception 15'ten 16'ya kimse dokunmadan gider.
+
+Beceri kutusuna bir kez tıkla yeterlilik, iki kez uzmanlık (`∗`, yeterlilik iki
+kez sayılır), üç kez temizler. Grubu savaşa eklerken inisiyatif artık gerçek DEX
+modifikatörüyle atılır.
+
+Eski roster'lar bozulmaz: üç passive skoru elle tutan kayıtlar taşınır ve "elle"
+diye işaretlenir; yanındaki düğme hesaplanan değere döndürür.
+
 ### Zar: iki mod
 
 Zar panelinin başında iki mod var — hangisinin açık olduğu her zaman görünür.
@@ -70,7 +94,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 354 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools
+npm run test       # 407 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools, karakter
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
