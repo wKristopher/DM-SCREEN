@@ -70,7 +70,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 270 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, toplu içe aktarma
+npm run test       # 354 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
@@ -243,6 +243,47 @@ hangi dosyalar neden atlandı — hepsi önce ekranda listelenir. Atlananlar
 sayılmaz, tek tek yazılır; "12 dosya atlandı" kimseye hangi on iki olduğunu
 söylemez. Yanlışlıkla klasöre düşmüş bir yedek dosyası da tanınır ve doğru
 sekmeye yönlendirilir.
+
+### 5etools homebrew
+
+Ocak → **5etools** düğmesi
+[TheGiddyLimit/homebrew](https://github.com/TheGiddyLimit/homebrew) deposunu
+uygulama içinden gezdirir: ara, bir dosyaya tıkla, tarayıcın doğrudan GitHub'dan
+çekip Kâhin biçimine çevirsin. Ölçüm: *Tome of Beasts 2* dosyası 420 yaratık +
+6 eşya, ~95 ms'de dönüşüyor.
+
+Depo kendi dosya listesini `_generated/index-props.json` altında yayınlıyor ve
+raw.githubusercontent.com `access-control-allow-origin: *` gönderiyor. Bunun
+sonucu önemli: **GitHub API'ye gerek yok** — token yok, saatlik istek sınırı
+yok, araya giren bir sunucumuz yok. 729 kullanılabilir dosya listeleniyor.
+
+Şema tamamen farklı, o yüzden bir çevirici var (`src/lib/fivetools.ts`):
+
+| 5etools | Kâhin |
+|---|---|
+| `{monster: […]}` | `monsters` |
+| `size: ["H"]`, `alignment: ["C","E"]` | `Huge`, `chaotic evil` |
+| `ac: [{ac:14, from:["natural armor"]}]` | `armor_class` + `armor_desc` |
+| `hp: {average, formula}` | `hit_points` + `hit_dice` |
+| `str/dex/con…`, `cr: "1/8"` | `strength/dexterity/…`, `cr: 0.125` |
+
+En çok emek gereken kısım metin. Kaynak, kendi işaretleme dilinde yazılmış:
+
+```
+{@atk mw} {@hit +8} to hit, reach 5 ft. {@h}12 ({@damage 2d6 + 5}) piercing damage.
+→  Melee Weapon Attack: +8 to hit, reach 5 ft. Hit: 12 (2d6 + 5) piercing damage.
+```
+
+Bu çözülmezse içe aktarılan statblock, hiç aktarılmamış olmasından kötüdür.
+`{@hit}` iki türlü de yazılıyor (`8` ve `+8`) — yalnızca işaretsiz olana işaret
+ekleniyor, yoksa satır `++8` diye okunuyor.
+
+Çeviri tek yönde kayıplı: temsil edemediğimiz alan **düşürülür, uydurulmaz**.
+HP'si metin olarak yazılmış bir yaratık ("efendisininkine eşit") 0 HP ve o metinle
+gelir, kimsenin atmadığı bir sayıyla değil.
+
+> Bu içerik topluluk üyelerinin yazıp paylaştığı homebrew'dur; resmî kitap metni
+> değildir. Alınan her şey yalnızca senin tarayıcında durur.
 
 ---
 

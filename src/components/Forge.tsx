@@ -5,13 +5,17 @@
  * and any table hooked to a generator gets mixed into the oracle's draws.
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   emptyPack, blankMonster, blankSpell, blankItem, blankTable, blankNpc, blankEntry,
-  parsePack, downloadPack, fetchPack, countEntries, TABLE_HOOKS,
+  downloadPack, countEntries, TABLE_HOOKS,
   type BrewPack, type BrewTable, type BrewNpc,
 } from '../lib/homebrew'
-import { importFiles, reportEntries, type BulkReport } from '../lib/bulk'
+import { importFiles, reportEntries, parseAnyPack, type BulkReport } from '../lib/bulk'
+import {
+  HOMEBREW_INDEX, parseCatalogue, rawUrlFor, toRawUrl, convertFiveTools,
+  type CatalogueFile,
+} from '../lib/fivetools'
 import type { Monster, Spell, MagicItem, NamedEntry } from '../lib/open5e'
 import { CREATURE_TYPES } from '../lib/srd'
 import { useStore } from '../store/useStore'
@@ -430,6 +434,141 @@ function NpcEditor({ n, onChange }: { n: BrewNpc; onChange: (n: BrewNpc) => void
   )
 }
 
+/* ------------------------------------------------------- 5etools catalogue */
+
+const KIND_LABELS: Record<string, string> = {
+  monster: 'yaratık',
+  spell: 'büyü',
+  item: 'eşya',
+  baseitem: 'eşya',
+  magicvariant: 'eşya',
+}
+
+/**
+ * Browse github.com/TheGiddyLimit/homebrew from inside the app.
+ *
+ * The repository publishes its own file listing at a raw URL, which is the
+ * whole reason this can exist: no GitHub API, so no token, no rate limit, and
+ * no server of ours in the middle. The browser fetches the index, then one
+ * file, and converts it locally.
+ */
+function FiveToolsBrowser({ onImported }: { onImported: (name: string, n: number) => void }) {
+  const addPack = useStore((s) => s.addPack)
+  const [files, setFiles] = useState<CatalogueFile[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetch(HOMEBREW_INDEX, { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Liste alınamadı (${r.status})`))))
+      .then((raw) => alive && setFiles(parseCatalogue(raw)))
+      .catch((e) => alive && setErr(e instanceof Error ? e.message : 'Liste alınamadı'))
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const matches = useMemo(() => {
+    if (!files) return []
+    const needle = q.trim().toLocaleLowerCase('tr')
+    const hits = needle
+      ? files.filter((f) => f.path.toLocaleLowerCase('tr').includes(needle))
+      : files
+    // The full list is 700-odd rows; the browser renders them fine but nobody
+    // scrolls that far, so searching is the intended way in.
+    return hits.slice(0, 120)
+  }, [files, q])
+
+  const take = async (f: CatalogueFile) => {
+    setBusy(f.path)
+    setErr(null)
+    try {
+      const res = await fetch(rawUrlFor(f.path), { headers: { Accept: 'application/json' } })
+      if (!res.ok) throw new Error(`Dosya alınamadı (${res.status})`)
+      const fallback = f.path.split('/').pop()?.replace(/\.\w+$/, '') ?? 'İçe aktarılan'
+      const { pack } = convertFiveTools(await res.json(), fallback)
+      const n = countEntries(pack)
+      if (!n) throw new Error('Bu dosyada aktarılabilir kayıt çıkmadı.')
+      addPack(pack)
+      onImported(pack.name, n)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Alınamadı')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <p className="text-[0.78rem] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+        <strong>TheGiddyLimit/homebrew</strong> — topluluğun paylaştığı 5etools homebrew’u. Bir dosya seç,
+        tarayıcın doğrudan GitHub’dan çekip Kâhin biçimine çevirsin.
+      </p>
+
+      <input
+        className="field"
+        placeholder="Ara: kobold, tome of beasts, spell…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        autoFocus
+      />
+
+      {err && (
+        <p className="text-[0.75rem] px-2 py-1 rounded-lg" style={{ background: 'var(--rose-wash)', color: 'var(--rose)' }}>
+          {err}
+        </p>
+      )}
+
+      {!files && !err && (
+        <p className="text-[0.78rem]" style={{ color: 'var(--ink-mute)' }}>
+          Liste alınıyor…
+        </p>
+      )}
+
+      {files && (
+        <>
+          <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
+            {files.length} dosya · {matches.length} gösteriliyor
+          </p>
+          <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+            {matches.map((f) => {
+              const kinds = [...new Set(f.kinds.map((k) => KIND_LABELS[k] ?? k))]
+              return (
+                <button
+                  key={f.path}
+                  className="w-full text-left flex items-baseline gap-2 px-2.5 py-1.5 rounded-xl text-[0.74rem] hover:opacity-80"
+                  style={{ background: 'var(--bg-deep)' }}
+                  disabled={!!busy}
+                  onClick={() => void take(f)}
+                >
+                  <span className="truncate" style={{ color: 'var(--ink-soft)' }}>
+                    {f.path.replace(/\.json$/, '')}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[0.66rem]" style={{ color: 'var(--ink-mute)' }}>
+                    {busy === f.path ? 'alınıyor…' : kinds.join(' · ')}
+                  </span>
+                </button>
+              )
+            })}
+            {matches.length === 0 && (
+              <p className="text-[0.75rem] py-2" style={{ color: 'var(--ink-mute)' }}>
+                Eşleşme yok.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      <p className="text-[0.64rem] leading-relaxed" style={{ color: 'var(--ink-mute)' }}>
+        Bu içerik topluluk üyelerinin kendi yazdığı ve paylaştığı homebrew’dur; resmî kitap metni değildir.
+        Alınan her şey yalnızca senin tarayıcında durur.
+      </p>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ panel */
 
 export function Forge() {
@@ -440,6 +579,7 @@ export function Forge() {
   const [editing, setEditing] = useState<{ kind: Section; index: number } | null>(null)
   const [importUrl, setImportUrl] = useState('')
   const [showImport, setShowImport] = useState(false)
+  const [showBrowser, setShowBrowser] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const folderRef = useRef<HTMLInputElement>(null)
   const [bulk, setBulk] = useState<BulkReport | null>(null)
@@ -454,7 +594,7 @@ export function Forge() {
 
   const importFile = async (file: File) => {
     try {
-      const { pack: imported, warnings } = parsePack(JSON.parse(await file.text()), file.name.replace(/\.\w+$/, ''))
+      const { pack: imported, warnings } = parseAnyPack(JSON.parse(await file.text()), file.name.replace(/\.\w+$/, ''))
       addPack(imported)
       setToast(
         `"${imported.name}" içe aktarıldı — ${countEntries(imported)} kayıt` +
@@ -492,7 +632,14 @@ export function Forge() {
 
   const importFromUrl = async () => {
     try {
-      const { pack: imported } = await fetchPack(importUrl)
+      // A github.com link pasted from the address bar points at an HTML page,
+      // which answers with a web page and no CORS header. Rewrite rather than
+      // explain the difference.
+      const url = toRawUrl(importUrl.trim())
+      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!res.ok) throw new Error(`Kaynak yanıt vermedi (${res.status})`)
+      const name = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '').replace(/\.\w+$/, '')
+      const { pack: imported } = parseAnyPack(await res.json(), name || 'İçe aktarılan')
       addPack(imported)
       setToast(`"${imported.name}" içe aktarıldı — ${countEntries(imported)} kayıt`)
       setShowImport(false)
@@ -537,6 +684,9 @@ export function Forge() {
             title="Bir klasördeki tüm JSON dosyaları"
           >
             <Icons.upload className="w-3 h-3" /> {reading ? 'Okunuyor…' : 'Klasör'}
+          </button>
+          <button className="btn btn-xs" onClick={() => setShowBrowser(true)} title="5etools topluluk homebrew’u">
+            5etools
           </button>
           <button className="btn btn-xs" onClick={() => setShowImport(true)}>
             URL
@@ -778,6 +928,15 @@ export function Forge() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={showBrowser} onClose={() => setShowBrowser(false)} title="5etools homebrew">
+        <FiveToolsBrowser
+          onImported={(name, n) => {
+            setToast(`"${name}" içe aktarıldı — ${n} kayıt`)
+            setShowBrowser(false)
+          }}
+        />
       </Modal>
 
       <Modal open={showImport} onClose={() => setShowImport(false)} title="URL’den içe aktar">

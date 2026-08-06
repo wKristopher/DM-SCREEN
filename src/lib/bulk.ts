@@ -34,7 +34,20 @@ import {
   type BrewTable,
   type BrewNpc,
 } from './homebrew'
+import { isFiveToolsFile, convertFiveTools } from './fivetools'
 import type { Monster, Spell, MagicItem } from './open5e'
+
+/**
+ * Parse whatever a file turns out to be.
+ *
+ * Kâhin's own format, a 5etools file, or something pack-shaped from another
+ * tool — the caller should not have to know which, so the sniffing lives here
+ * and every import route (single file, folder, URL) goes through it.
+ */
+export function parseAnyPack(raw: unknown, fallbackName: string): { pack: BrewPack; warnings: string[] } {
+  if (isFiveToolsFile(raw)) return convertFiveTools(raw, fallbackName)
+  return parsePack(raw, fallbackName)
+}
 
 /** Above this a "folder" is almost certainly a mistake — a whole Downloads dir. */
 export const MAX_FILES = 600
@@ -198,10 +211,11 @@ export async function importFiles(files: File[], fallbackName = 'İçe aktarıla
       continue
     }
 
-    // Already a pack: keep its own name and identity.
-    if (asObj && asObj.format === BREW_FORMAT) {
+    // Already a pack, or a 5etools file: either way it names itself, so it
+    // keeps its own identity rather than being gathered under the folder.
+    if (asObj && (asObj.format === BREW_FORMAT || isFiveToolsFile(parsed))) {
       try {
-        const { pack, warnings: w } = parsePack(parsed, file.name.replace(/\.\w+$/, ''))
+        const { pack, warnings: w } = parseAnyPack(parsed, file.name.replace(/\.\w+$/, ''))
         packs.push(pack)
         for (const line of w) warnings.push(`${path}: ${line}`)
       } catch (e) {
@@ -236,7 +250,7 @@ export async function importFiles(files: File[], fallbackName = 'İçe aktarıla
     // have a go before giving up on it.
     if (asObj && ['monsters', 'spells', 'items', 'tables', 'npcs'].some((k) => Array.isArray(asObj[k]))) {
       try {
-        const { pack, warnings: w } = parsePack(parsed, file.name.replace(/\.\w+$/, ''))
+        const { pack, warnings: w } = parseAnyPack(parsed, file.name.replace(/\.\w+$/, ''))
         if (countEntries(pack) > 0) {
           packs.push(pack)
           for (const line of w) warnings.push(`${path}: ${line}`)
