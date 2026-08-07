@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react'
 import { XP_THRESHOLDS, encounterMultiplier } from '../lib/srd'
 import { searchMonsters, xpForCr, formatCr, type Monster } from '../lib/open5e'
 import { useStore, useHomebrewMonsters } from '../store/useStore'
-import { Icons, Panel, Empty } from './ui'
+import { Icons, Panel, Empty, Modal } from './ui'
+import { useUi } from '../store/useUi'
 
 interface Slot {
   monster: Monster
@@ -30,6 +31,12 @@ export function EncounterBuilder() {
   // usable before anyone has entered their characters.
   const [fallbackSize, setFallbackSize] = useState(4)
   const [fallbackLevel, setFallbackLevel] = useState(3)
+  const [showLibrary, setShowLibrary] = useState(false)
+
+  const encounters = useStore((s) => s.encounters)
+  const saveEncounter = useStore((s) => s.saveEncounter)
+  const removeEncounter = useStore((s) => s.removeEncounter)
+  const setToast = useUi((s) => s.setToast)
 
   const partySize = party.length || fallbackSize
   const levels = party.length ? party.map((p) => p.level) : Array.from({ length: fallbackSize }, () => fallbackLevel)
@@ -64,11 +71,22 @@ export function EncounterBuilder() {
       return
     }
     const local = hbMonsters.filter((m) => m.name.toLocaleLowerCase('tr').includes(q.toLocaleLowerCase('tr')))
+
+    // Paint the homebrew matches first. They are already in memory, so making
+    // them wait on a network round trip is pure delay — and when the network is
+    // down that delay is the full request timeout, during which the panel looks
+    // empty despite having something to show.
+    setFound(local)
+
     try {
       const res = await searchMonsters({ search: q, limit: 8 })
-      setFound([...local, ...res.results].slice(0, 10))
+      // A slower response for an older query must not overwrite a newer one.
+      setQuery((current) => {
+        if (current === q) setFound([...local, ...res.results].slice(0, 10))
+        return current
+      })
     } catch {
-      setFound(local)
+      /* the local matches are already on screen */
     }
   }
 
@@ -96,26 +114,95 @@ export function EncounterBuilder() {
       subtitle={party.length ? `${party.length} kişilik grup` : 'Örnek grup (roster boş)'}
       icon={<Icons.skull />}
       actions={
-        slots.length > 0 && (
-          <>
-            <button
-              className="btn btn-accent btn-xs"
-              onClick={() => {
-                slots.forEach((s) => addMonsterToCombat(s.monster, s.count))
-                setSlots([])
-              }}
-            >
-              <Icons.swords className="w-3 h-3" /> Savaşa gönder
+        <>
+          {slots.length > 0 && (
+            <>
+              <button
+                className="btn btn-accent btn-xs"
+                onClick={() => {
+                  slots.forEach((s) => addMonsterToCombat(s.monster, s.count))
+                  setSlots([])
+                }}
+              >
+                <Icons.swords className="w-3 h-3" /> Savaşa gönder
+              </button>
+              <button
+                className="btn btn-xs"
+                onClick={() => {
+                  const name = window.prompt('Karşılaşma adı:', slots.map((s) => s.monster.name).join(', ').slice(0, 40))
+                  if (name === null) return
+                  saveEncounter(name, slots)
+                  setToast(`"${name || 'Adsız karşılaşma'}" kaydedildi`)
+                }}
+                title="Bu kurulumu sakla"
+              >
+                <Icons.download className="w-3 h-3" /> Kaydet
+              </button>
+              <button className="btn btn-ghost btn-xs" onClick={() => setSlots([])}>
+                Temizle
+              </button>
+            </>
+          )}
+          {encounters.length > 0 && (
+            <button className="btn btn-xs" onClick={() => setShowLibrary(true)}>
+              Hazırlar {encounters.length}
             </button>
-            <button className="btn btn-ghost btn-xs" onClick={() => setSlots([])}>
-              Temizle
-            </button>
-          </>
-        )
+          )}
+        </>
       }
       className="lg:h-full"
       bodyClass="p-3 space-y-3"
     >
+      <Modal open={showLibrary} onClose={() => setShowLibrary(false)} title="Hazır karşılaşmalar">
+        <div className="space-y-1.5">
+          {encounters.map((e) => {
+            const n = e.slots.reduce((t, s) => t + s.count, 0)
+            return (
+              <div key={e.id} className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-deep)' }}>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-medium text-[0.84rem] truncate flex-1">{e.name}</span>
+                  <span className="text-[0.68rem] shrink-0" style={{ color: 'var(--ink-mute)' }}>
+                    {n} yaratık
+                  </span>
+                </div>
+                <p className="text-[0.7rem] truncate mb-1.5" style={{ color: 'var(--ink-mute)' }}>
+                  {e.slots.map((s) => `${s.count}× ${s.monster.name}`).join(', ')}
+                </p>
+                <div className="flex gap-1.5">
+                  <button
+                    className="btn btn-accent btn-xs flex-1"
+                    onClick={() => {
+                      e.slots.forEach((s) => addMonsterToCombat(s.monster, s.count))
+                      setShowLibrary(false)
+                      setToast(`"${e.name}" savaşa gönderildi`)
+                    }}
+                  >
+                    <Icons.swords className="w-3 h-3" /> Savaşa
+                  </button>
+                  <button
+                    className="btn btn-xs flex-1"
+                    onClick={() => {
+                      setSlots(e.slots.map((s) => ({ ...s })))
+                      setShowLibrary(false)
+                    }}
+                    title="Kurucuya yükle, üstünde oyna"
+                  >
+                    Kurucuya
+                  </button>
+                  <button
+                    className="btn btn-icon btn-ghost"
+                    style={{ color: 'var(--rose)' }}
+                    onClick={() => removeEncounter(e.id)}
+                  >
+                    <Icons.trash className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Modal>
+
       {!party.length && (
         <div className="flex items-end gap-2 rounded-xl p-2.5" style={{ background: 'var(--bg-deep)' }}>
           <label className="flex-1">

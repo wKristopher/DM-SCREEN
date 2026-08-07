@@ -482,6 +482,7 @@ function BackupBlock() {
             <li>
               {pending.summary.packs} derleme · {pending.summary.brewEntries} kayıt
             </li>
+            <li>{pending.summary.encounters} hazır karşılaşma</li>
           </ul>
           <p className="text-[0.68rem]" style={{ color: 'var(--rose)' }}>
             Bu, şu andaki grubunun, notlarının ve günlüğünün yerine geçer. Önce mevcut hâlin yedeğini almak

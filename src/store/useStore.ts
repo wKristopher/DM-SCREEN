@@ -61,6 +61,22 @@ export interface PartyMember extends CharacterSheet {
   notes: string
 }
 
+/**
+ * A fight prepared before the session.
+ *
+ * The monsters are stored whole rather than as slugs. A saved encounter that
+ * needs a network round trip before it can be used is not prep — it is a
+ * promise, and it breaks in the one place it matters: a table with bad wifi.
+ * The cost is a few KB each, which localStorage carries without noticing.
+ */
+export interface SavedEncounter {
+  id: string
+  name: string
+  createdAt: number
+  slots: Array<{ monster: Monster; count: number }>
+  notes: string
+}
+
 export interface LogEntry {
   id: string
   at: number
@@ -116,6 +132,9 @@ interface State {
   /** A line the DM pushes to the player screen. */
   headline: string
 
+  /* prep */
+  encounters: SavedEncounter[]
+
   /* content */
   packs: BrewPack[]
   activePackId: string | null
@@ -152,6 +171,11 @@ interface State {
   clearLog: () => void
   setNotes: (n: string) => void
   setHeadline: (h: string) => void
+
+  /* -------------------------------------------------- prep */
+  saveEncounter: (name: string, slots: SavedEncounter['slots'], notes?: string) => void
+  removeEncounter: (id: string) => void
+  renameEncounter: (id: string, name: string) => void
 
   /* -------------------------------------------------- homebrew */
   addPack: (p: BrewPack) => void
@@ -214,6 +238,7 @@ export const useStore = create<State>()(
       notes: '',
       log: [],
       headline: '',
+      encounters: [],
       packs: [],
       activePackId: null,
       settings: DEFAULT_SETTINGS,
@@ -453,6 +478,19 @@ export const useStore = create<State>()(
 
       setHeadline: (h) => set({ headline: h }),
 
+      saveEncounter: (name, slots, notes = '') =>
+        set((s) => ({
+          encounters: [
+            { id: newId(), name: name.trim() || 'Adsız karşılaşma', createdAt: Date.now(), slots, notes },
+            ...s.encounters,
+          ],
+        })),
+
+      removeEncounter: (id) => set((s) => ({ encounters: s.encounters.filter((e) => e.id !== id) })),
+
+      renameEncounter: (id, name) =>
+        set((s) => ({ encounters: s.encounters.map((e) => (e.id === id ? { ...e, name } : e)) })),
+
       /* ---------------------------------------------------------- homebrew */
 
       addPack: (p) => set((s) => ({ packs: [...s.packs, p], activePackId: p.id })),
@@ -498,6 +536,8 @@ export const useStore = create<State>()(
           log: s.log,
           packs: s.packs,
           activePackId: s.activePackId,
+          headline: s.headline,
+          encounters: s.encounters,
           settings: s.settings,
         }
       },
@@ -515,6 +555,8 @@ export const useStore = create<State>()(
             log: (data.log as LogEntry[]) ?? [],
             packs: data.packs ?? [],
             activePackId: data.activePackId ?? null,
+            headline: data.headline ?? '',
+            encounters: (data.encounters as SavedEncounter[]) ?? [],
             settings: {
               ...DEFAULT_SETTINGS,
               ...incoming,
@@ -539,6 +581,7 @@ export const useStore = create<State>()(
         notes: s.notes,
         log: s.log,
         headline: s.headline,
+        encounters: s.encounters,
         packs: s.packs,
         activePackId: s.activePackId,
         settings: s.settings,

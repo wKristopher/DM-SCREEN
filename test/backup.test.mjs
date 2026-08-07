@@ -32,6 +32,10 @@ const state = {
     { id: 'b1', name: 'Kendi işlerim', monsters: [{}, {}], spells: [{}], items: [], tables: [{}], npcs: [] },
   ],
   activePackId: 'b1',
+  headline: 'Kapı sürgülü.',
+  encounters: [
+    { id: 'e1', name: 'Mahzen pususu', createdAt: 1, notes: '', slots: [{ count: 3, monster: { name: 'Goblin', cr: 0.25 } }] },
+  ],
   settings: {
     theme: 'dusk',
     dice: { mode: 'favoured', level: 'strong' },
@@ -71,6 +75,10 @@ check('log survives', reloaded.data.log.length === 2)
 check('packs survive', reloaded.data.packs.length === 1)
 check('combat state survives', reloaded.data.round === 3 && reloaded.data.combatActive === true)
 check('dice mode survives', reloaded.data.settings.dice.level === 'strong')
+// Prep is exactly the kind of work a backup exists to protect.
+check('prepared encounters survive', reloaded.data.encounters.length === 1)
+check('and carry their monsters whole, not as slugs', reloaded.data.encounters[0].slots[0].monster.name === 'Goblin')
+check('the player-screen line survives', reloaded.data.headline === 'Kapı sürgülü.')
 check('timestamp is recorded', !Number.isNaN(Date.parse(reloaded.savedAt)))
 
 /* ------------------------------------------------------------- summary */
@@ -81,6 +89,7 @@ check('summary counts log', s.logEntries === 2)
 check('summary counts notes', s.noteChars === state.notes.length)
 check('summary counts packs', s.packs === 1)
 check('summary counts every kind of brew entry', s.brewEntries === 4, `got ${s.brewEntries}`)
+check('summary counts encounters', s.encounters === 1, String(s.encounters))
 
 /* ------------------------------------------------------------- rejection */
 
@@ -117,6 +126,7 @@ const sparse = parseBackup(JSON.stringify({ format: 'kahin-backup/2', data: { pa
 check('a newer format version still loads', sparse.data.party.length === 1)
 const empty = buildBackup({})
 check('an empty screen still produces a valid backup', summarise(empty).party === 0 && empty.data.notes === '')
+check('an empty screen has no encounters', summarise(empty).encounters === 0)
 check('missing settings do not crash the summary', summarise(empty).hasSettings === false)
 
 check('a broken timestamp reads as tarihsiz', formatSavedAt('not-a-date') === 'tarihsiz')

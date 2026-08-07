@@ -26,6 +26,9 @@ export interface BackupData {
   log?: unknown[]
   packs?: BrewPack[]
   activePackId?: string | null
+  headline?: string
+  /** Prepared fights. Lost prep is the kind of loss a backup exists to stop. */
+  encounters?: unknown[]
   /**
    * Left as `unknown` on purpose: this module must not import the store's
    * Settings type, or the backup format would be pinned to whatever the app
@@ -49,6 +52,7 @@ export interface BackupSummary {
   noteChars: number
   packs: number
   brewEntries: number
+  encounters: number
   hasSettings: boolean
 }
 
@@ -87,6 +91,8 @@ export function buildBackup(state: BackupData): Backup {
       log: state.log ?? [],
       packs: state.packs ?? [],
       activePackId: state.activePackId ?? null,
+      headline: state.headline ?? '',
+      encounters: state.encounters ?? [],
       settings: scrubSettings(state.settings),
     },
   }
@@ -113,6 +119,7 @@ export function summarise(backup: Backup): BackupSummary {
     noteChars: d.notes?.length ?? 0,
     packs: d.packs?.length ?? 0,
     brewEntries: countBrewEntries(d.packs),
+    encounters: d.encounters?.length ?? 0,
     hasSettings: Boolean(d.settings),
   }
 }

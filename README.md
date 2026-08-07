@@ -37,6 +37,17 @@ Tuzak var mı?     → evet/hayır kâhini
 
 `Alt+1…6` sekmeler arasında gezer.
 
+### Hazır karşılaşmalar
+
+Karşılaşma Kurucu'da bir dövüş kurup **Kaydet** dersen kütüphaneye girer.
+Sonraki seansta **Hazırlar** düğmesinden ya doğrudan savaşa gönderirsin ya da
+kurucuya yükleyip üstünde oynarsın. Prep tavsiyesinin klasiği bu: birkaç
+karşılaşma hazırla, grup görmediyse başka yerde tekrar kullan.
+
+Yaratıklar **bütün olarak** saklanır, slug olarak değil. Ağ isteği gerektiren
+bir prep prep değildir — tam da önem kazandığı yerde, wifi'si kötü bir masada
+kırılır. Bedeli birkaç KB; `localStorage` bunu fark etmez. Yedeğe de dahil.
+
 ### Oyuncu ekranı (ikinci ekran)
 
 Savaş sekmesindeki **Oyuncu ekranı** düğmesi ikinci bir pencere açar; TV'ye ya da
@@ -122,7 +133,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 438 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools, karakter, oyuncu ekranı
+npm run test       # 445 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools, karakter, oyuncu ekranı
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```
