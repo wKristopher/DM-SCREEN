@@ -37,6 +37,34 @@ Tuzak var mı?     → evet/hayır kâhini
 
 `Alt+1…6` sekmeler arasında gezer.
 
+### Oyuncu ekranı (ikinci ekran)
+
+Savaş sekmesindeki **Oyuncu ekranı** düğmesi ikinci bir pencere açar; TV'ye ya da
+yan monitöre sürükle. Masa inisiyatif sırasını, kimin sırada olduğunu ve turu
+uzaktan okunacak boyutta görür.
+
+Sunucu yok, ikinci hesap yok, ikinci cihaz yok: aynı origin, aynı giriş. DM'in
+penceresi her değişiklikte `localStorage`'a yazıyor; `storage` olayı **diğer**
+sekmelerde tetiklendiği için ikinci pencere anında tazeleniyor. (Roll20'de aynı
+şey iki hesap ve iki tarayıcı istiyor.)
+
+Masanın **görmediği** iki şey var, ve kuralı `src/lib/table.ts`'te tek bir yerde
+duruyor — çünkü ekrana sızan bir sayı geri alınamaz:
+
+- **Gizli işaretli hiçbir şey görünmez.** Soluk da değil, boş satır da değil,
+  sırada boşluk da değil — boşluğun kendisi bilgidir. Gizli bir yaratığın sırası
+  geldiğinde ekranda kimse vurgulanmaz.
+- **Yaratıkların HP'si sayı değil kelime.** `sağlam · sıyrık almış · kanıyor ·
+  ayakta zor duruyor · düştü`. *Kanıyor* eşiği 5e'nin *bloodied* tanımıyla aynı
+  yerde (yarı ve altı), *sağlam* ise hiç hasar almamış demek — %90 canlı bir
+  yaratığı sağlam göstermek masaya yanlış bilgi verir.
+
+Oyuncu karakterlerinin HP'si açık gösterilir; zaten kendi sayılarını biliyorlar.
+Konsantrasyon "var" olarak geçer, hangi büyü olduğu geçmez.
+
+Yanındaki kutuya yazdığın satır ekranda büyük punto belirir — "Kapı içeriden
+sürgülü." gibi. Sahne notunu söylemek yerine gösterirsin.
+
 ### Karakter kağıtları
 
 Kampanya → Grup'ta her oyuncu karakteri **statblock gibi** açılır: aynı düzen,
@@ -94,7 +122,7 @@ Diğer komutlar:
 
 ```bash
 npm run build      # dist/ üretir — herhangi bir statik hosta atılabilir
-npm run test       # 407 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools, karakter
+npm run test       # 438 test: zar, kâhin, şema, sağlayıcılar, kimlik, yedek, içe aktarma, 5etools, karakter, oyuncu ekranı
 npm run check      # typecheck + test + build
 npm run test:deploy # Vercel'in kendi derleyicisini yerelde koşturur
 ```

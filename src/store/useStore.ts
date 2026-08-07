@@ -113,6 +113,9 @@ interface State {
   notes: string
   log: LogEntry[]
 
+  /** A line the DM pushes to the player screen. */
+  headline: string
+
   /* content */
   packs: BrewPack[]
   activePackId: string | null
@@ -148,6 +151,7 @@ interface State {
   logRoll: (r: RollResult, label?: string) => void
   clearLog: () => void
   setNotes: (n: string) => void
+  setHeadline: (h: string) => void
 
   /* -------------------------------------------------- homebrew */
   addPack: (p: BrewPack) => void
@@ -209,6 +213,7 @@ export const useStore = create<State>()(
       party: [],
       notes: '',
       log: [],
+      headline: '',
       packs: [],
       activePackId: null,
       settings: DEFAULT_SETTINGS,
@@ -446,6 +451,8 @@ export const useStore = create<State>()(
 
       setNotes: (n) => set({ notes: n }),
 
+      setHeadline: (h) => set({ headline: h }),
+
       /* ---------------------------------------------------------- homebrew */
 
       addPack: (p) => set((s) => ({ packs: [...s.packs, p], activePackId: p.id })),
@@ -531,6 +538,7 @@ export const useStore = create<State>()(
         party: s.party,
         notes: s.notes,
         log: s.log,
+        headline: s.headline,
         packs: s.packs,
         activePackId: s.activePackId,
         settings: s.settings,

@@ -6,6 +6,7 @@ import { CONDITIONS } from '../lib/srd'
 import { roll, signed } from '../lib/dice'
 import { StatBlock } from './StatBlock'
 import { Icons, Panel, Empty, Modal, Hp, RichText } from './ui'
+import { PlayerScreenControl } from './PlayerView'
 
 function ConditionPicker({ c, onClose }: { c: Combatant; onClose: () => void }) {
   const toggleCondition = useStore((s) => s.toggleCondition)
@@ -369,6 +370,12 @@ export function CombatTracker() {
         <button className="btn btn-xs" disabled={!combatants.length} onClick={sortInitiative}>
           Sırala
         </button>
+      </div>
+
+      {/* The second screen lives with combat because that is when it earns
+          its place — the table watching the order move. */}
+      <div className="mb-2">
+        <PlayerScreenControl />
       </div>
 
       {combatants.length === 0 ? (

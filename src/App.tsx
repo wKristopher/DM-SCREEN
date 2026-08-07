@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, useDiceFavourSync } from './store/useStore'
 import { useUi, type TabKey } from './store/useUi'
 import { CommandBar, OraclePanel } from './components/Oracle'
@@ -10,6 +10,7 @@ import { EncounterBuilder } from './components/Encounter'
 import { Campaign } from './components/Campaign'
 import { Forge } from './components/Forge'
 import { Icons } from './components/ui'
+import { PlayerView, isPlayerWindow, PLAYER_HASH } from './components/PlayerView'
 
 const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
   { key: 'screen', label: 'Ekran', icon: <Icons.scroll /> },
@@ -81,9 +82,18 @@ export default function App() {
   const lookup = useUi((s) => s.lookup)
   const theme = useStore((s) => s.settings.theme)
   const setSettings = useStore((s) => s.setSettings)
+  const [player, setPlayer] = useState(isPlayerWindow())
 
   // One place, so every roll site in the app inherits the dice mode.
   useDiceFavourSync()
+
+  // The hash is the only routing this app has, and it needs to survive the
+  // browser's back button as well as a fresh window opened straight onto it.
+  useEffect(() => {
+    const onHash = () => setPlayer(location.hash === PLAYER_HASH)
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -102,6 +112,10 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [setTab])
+
+  // The player window is the same app in a different costume: same origin,
+  // same login, same state — just a different thing on screen.
+  if (player) return <PlayerView />
 
   return (
     <div className="relative z-10 h-full flex flex-col">
