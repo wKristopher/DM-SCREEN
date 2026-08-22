@@ -454,10 +454,19 @@ const KIND_LABELS: Record<string, string> = {
  */
 function FiveToolsBrowser({ onImported }: { onImported: (name: string, n: number) => void }) {
   const addPack = useStore((s) => s.addPack)
+  const setToast = useUi((s) => s.setToast)
   const [files, setFiles] = useState<CatalogueFile[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  // A plain string path while a single file is being taken, or the sentinel
+  // below while a batch is running — either way, "truthy busy" disables the
+  // whole list so two imports can't race each other.
   const [busy, setBusy] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [bulkFailed, setBulkFailed] = useState<{ path: string; reason: string }[]>([])
+
+  const BULK_BUSY = '__bulk__'
 
   useEffect(() => {
     let alive = true
@@ -500,6 +509,90 @@ function FiveToolsBrowser({ onImported }: { onImported: (name: string, n: number
     }
   }
 
+  const toggle = (path: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const allMatchesSelected = matches.length > 0 && matches.every((f) => selected.has(f.path))
+
+  const toggleAllMatches = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allMatchesSelected) {
+        for (const f of matches) next.delete(f.path)
+      } else {
+        for (const f of matches) next.add(f.path)
+      }
+      return next
+    })
+  }
+
+  /**
+   * Fetch every selected file and import whichever ones convert cleanly.
+   *
+   * A handful of requests in flight at once is plenty faster than one at a
+   * time without leaning on raw.githubusercontent.com hard enough to get
+   * throttled. One bad file (broken JSON, nothing importable in it) should
+   * not stop the rest — it's reported at the end instead.
+   */
+  const takeMany = async () => {
+    if (!files) return
+    const picked = files.filter((f) => selected.has(f.path))
+    if (!picked.length) return
+
+    setBusy(BULK_BUSY)
+    setErr(null)
+    setBulkFailed([])
+    setProgress({ done: 0, total: picked.length })
+
+    const failed: { path: string; reason: string }[] = []
+    let packCount = 0
+    let entryCount = 0
+
+    const CONCURRENCY = 4
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < picked.length) {
+        const f = picked[cursor++]
+        try {
+          const res = await fetch(rawUrlFor(f.path), { headers: { Accept: 'application/json' } })
+          if (!res.ok) throw new Error(`alınamadı (${res.status})`)
+          const fallback = f.path.split('/').pop()?.replace(/\.\w+$/, '') ?? 'İçe aktarılan'
+          const { pack } = convertFiveTools(await res.json(), fallback)
+          const n = countEntries(pack)
+          if (!n) throw new Error('aktarılabilir kayıt yok')
+          addPack(pack)
+          packCount++
+          entryCount += n
+        } catch (e) {
+          failed.push({ path: f.path, reason: e instanceof Error ? e.message : 'alınamadı' })
+        } finally {
+          setProgress((p) => (p ? { done: p.done + 1, total: p.total } : p))
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, picked.length) }, worker))
+
+    setBusy(null)
+    setProgress(null)
+    setBulkFailed(failed)
+    // Only the successful ones leave the selection — a failed file stays
+    // checked, so retrying is a matter of clicking the button again.
+    setSelected(new Set(failed.map((f) => f.path)))
+
+    if (packCount) {
+      setToast(`${packCount} dosya içe aktarıldı — ${entryCount} kayıt` + (failed.length ? ` (${failed.length} başarısız)` : ''))
+    } else if (failed.length) {
+      setErr(`${failed.length} dosyanın hiçbiri aktarılamadı.`)
+    }
+  }
+
   return (
     <div className="space-y-2.5">
       <p className="text-[0.78rem] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
@@ -529,27 +622,60 @@ function FiveToolsBrowser({ onImported }: { onImported: (name: string, n: number
 
       {files && (
         <>
-          <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
-            {files.length} dosya · {matches.length} gösteriliyor
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[0.68rem]" style={{ color: 'var(--ink-mute)' }}>
+              {files.length} dosya · {matches.length} gösteriliyor
+              {selected.size > 0 && ` · ${selected.size} seçili`}
+            </p>
+            <button
+              className="btn btn-xs ml-auto"
+              disabled={matches.length === 0 || !!busy}
+              onClick={toggleAllMatches}
+            >
+              {allMatchesSelected ? 'Görünenleri bırak' : 'Görünenleri seç'}
+            </button>
+            <button
+              className="btn btn-accent btn-xs"
+              disabled={selected.size === 0 || !!busy}
+              onClick={() => void takeMany()}
+              title="Seçili dosyaları toplu içe aktar"
+            >
+              {busy === BULK_BUSY
+                ? `Alınıyor… ${progress?.done ?? 0}/${progress?.total ?? 0}`
+                : `Seçilenleri içe aktar${selected.size ? ` (${selected.size})` : ''}`}
+            </button>
+          </div>
+
           <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
             {matches.map((f) => {
               const kinds = [...new Set(f.kinds.map((k) => KIND_LABELS[k] ?? k))]
               return (
-                <button
+                <div
                   key={f.path}
-                  className="w-full text-left flex items-baseline gap-2 px-2.5 py-1.5 rounded-xl text-[0.74rem] hover:opacity-80"
+                  className="w-full flex items-baseline gap-2 px-2.5 py-1.5 rounded-xl text-[0.74rem]"
                   style={{ background: 'var(--bg-deep)' }}
-                  disabled={!!busy}
-                  onClick={() => void take(f)}
                 >
-                  <span className="truncate" style={{ color: 'var(--ink-soft)' }}>
-                    {f.path.replace(/\.json$/, '')}
-                  </span>
+                  <input
+                    type="checkbox"
+                    className="shrink-0"
+                    checked={selected.has(f.path)}
+                    disabled={!!busy}
+                    onChange={() => toggle(f.path)}
+                  />
+                  <button
+                    className="flex-1 min-w-0 text-left truncate hover:opacity-80"
+                    disabled={!!busy}
+                    onClick={() => void take(f)}
+                    title="Tek başına içe aktar"
+                  >
+                    <span className="truncate" style={{ color: 'var(--ink-soft)' }}>
+                      {f.path.replace(/\.json$/, '')}
+                    </span>
+                  </button>
                   <span className="ml-auto shrink-0 text-[0.66rem]" style={{ color: 'var(--ink-mute)' }}>
                     {busy === f.path ? 'alınıyor…' : kinds.join(' · ')}
                   </span>
-                </button>
+                </div>
               )
             })}
             {matches.length === 0 && (
@@ -558,6 +684,21 @@ function FiveToolsBrowser({ onImported }: { onImported: (name: string, n: number
               </p>
             )}
           </div>
+
+          {bulkFailed.length > 0 && (
+            <details>
+              <summary className="text-[0.74rem] cursor-pointer" style={{ color: 'var(--rose)' }}>
+                {bulkFailed.length} dosya aktarılamadı
+              </summary>
+              <div className="mt-1.5 space-y-0.5 max-h-36 overflow-y-auto pr-1">
+                {bulkFailed.map((f, i) => (
+                  <p key={i} className="text-[0.7rem]" style={{ color: 'var(--ink-mute)' }}>
+                    {f.path.replace(/\.json$/, '')}: {f.reason}
+                  </p>
+                ))}
+              </div>
+            </details>
+          )}
         </>
       )}
 
